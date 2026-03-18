@@ -4,7 +4,7 @@ import json
 import firebase_admin
 from firebase_admin import credentials, db
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 import time
 
 # ==========================================
@@ -33,15 +33,25 @@ if not firebase_admin._apps:
     })
 
 # ==========================================
-# 3. การตั้งค่าหน้าเว็บ
+# 3. การตั้งค่าหน้าเว็บ และ ตัวแปรความจำ (Session State)
 # ==========================================
 st.set_page_config(page_title="Sleep Health Dashboard", page_icon="💤", layout="wide")
 
-# เมนูด้านข้าง (Sidebar) สำหรับเปิด-ปิดการอัปเดตอัตโนมัติ
+# สร้างตัวความจำว่า "วันนี้ส่ง LINE ไปหรือยัง?" เพื่อป้องกันการส่งซ้ำรัวๆ
+if 'last_sent_date' not in st.session_state:
+    st.session_state.last_sent_date = None
+
+# ==========================================
+# เมนูด้านข้าง (Sidebar) สำหรับตั้งค่าเวลา
+# ==========================================
 st.sidebar.title("⚙️ ตั้งค่าระบบ")
 auto_refresh = st.sidebar.toggle("🔄 อัปเดตอัตโนมัติ (ทุก 1 นาที)", value=True)
 
-st.title("💤 AI รายงานสุขภาพการนอนหลับ")
+st.sidebar.divider()
+st.sidebar.subheader("⏰ ตั้งเวลาส่งรายงาน (LINE)")
+alert_time = st.sidebar.time_input("เลือกเวลาส่งสรุปผล", value=dt_time(8, 0)) # ค่าเริ่มต้น 08:00 น.
+
+st.title("💤 AI รายงานการนอนหลับ")
 st.markdown("ระบบมอนิเตอร์สถานะ Real-time และสรุปสถิติการนอนหลับประจำวัน")
 st.divider()
 
@@ -67,7 +77,6 @@ col_h.metric("ความชื้น", f"{hum} %")
 if all_sleep_data:
     latest_key = list(all_sleep_data.keys())[-1]
     latest_data = all_sleep_data[latest_key]
-    
     col_pose.metric("ท่านอนปัจจุบัน", latest_data.get("pose", "-"))
     
     snore_status = latest_data.get("snore", "-")
@@ -81,56 +90,78 @@ else:
 st.divider()
 
 # ==========================================
-# 6. ส่วนวิเคราะห์และสรุปผลประจำวัน (Morning Summary)
+# 6. ส่วนวิเคราะห์และสรุปผลประจำวัน
 # ==========================================
-st.subheader("📊 สรุปผลการนอนหลับ (วิเคราะห์จาก 12 ชั่วโมงที่ผ่านมา)")
+st.subheader("📊 สรุปผลการนอนหลับ")
+
+# ให้ผู้ใช้เลือกวันที่ต้องการดูสถิติ (ค่าเริ่มต้นคือวันนี้)
+selected_date = st.date_input("เลือกวันที่ต้องการดูรายงาน", value=datetime.today().date())
 
 if all_sleep_data:
-    # แปลงข้อมูลจาก Firebase ให้อยู่ในรูปแบบตาราง (DataFrame) เพื่อคำนวณง่ายๆ
     df = pd.DataFrame.from_dict(all_sleep_data, orient='index')
     df['time'] = pd.to_datetime(df['time'])
     
-    # กรองเอาเฉพาะข้อมูล "เมื่อคืน" (ย้อนหลัง 12 ชั่วโมง)
-    now = datetime.now()
-    last_12h = now - timedelta(hours=12)
-    df_night = df[df['time'] >= last_12h]
+    # 🌟 กำหนดรอบการนอน: 18:00 ของเมื่อวาน ถึง 12:00 ของวันที่เลือก
+    start_time = datetime.combine(selected_date - timedelta(days=1), dt_time(18, 0))
+    end_time = datetime.combine(selected_date, dt_time(12, 0))
+    
+    # กรองข้อมูลเฉพาะรอบการนอนที่เลือก
+    df_night = df[(df['time'] >= start_time) & (df['time'] <= end_time)]
     
     if not df_night.empty:
         total_logs = len(df_night)
         
-        # แยกเฉพาะข้อมูลตอนที่ "กรน"
+        # กรองเฉพาะตอนที่กรน
         snore_df = df_night[df_night['snore'] == "SNORING"].copy()
         snore_count = len(snore_df)
         
-        # คำนวณเปอร์เซ็นต์
+        # คำนวณเปอร์เซ็นต์การกรน
         snore_percent = (snore_count / total_logs) * 100 if total_logs > 0 else 0
         
-        # หาช่วงเวลาที่กรนหนักที่สุด (Peak Hour)
+        # หาชั่วโมงที่กรนบ่อยที่สุด
         if snore_count > 0:
             snore_df['hour'] = snore_df['time'].dt.hour
-            peak_hour = int(snore_df['hour'].mode()[0]) # หาชั่วโมงที่โผล่มาบ่อยสุด
+            peak_hour = int(snore_df['hour'].mode()[0])
             peak_time_str = f"{peak_hour:02d}:00 - {peak_hour+1:02d}:00 น."
         else:
-            peak_time_str = "ไม่มีการกรนเลย (หลับสบายมาก)"
+            peak_time_str = "ไม่มีการกรน (หลับสบาย)"
             
         # โชว์หน้าแดชบอร์ด
+        st.write(f"ข้อมูลการนอนตั้งแต่ **{start_time.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time.strftime('%d/%m/%Y %H:%M')}**")
         col1, col2, col3 = st.columns(3)
         col1.metric("จำนวนครั้งที่ตรวจพบเสียงกรน", f"{snore_count} ครั้ง")
         col2.metric("คิดเป็นสัดส่วน (ของเวลานอน)", f"{snore_percent:.1f} %")
         col3.metric("ช่วงเวลาที่กรนบ่อยที่สุด", peak_time_str)
         
-        st.write("") # เว้นบรรทัด
+        # ฟอร์แมตข้อความสรุปผล
+        report_msg = f"\n☀️ สรุปผลการนอนหลับเช้านี้ ({selected_date.strftime('%d/%m/%Y')}) 💤\n\n🛌 จำนวนครั้งที่กรน: {snore_count} ครั้ง\n📊 สัดส่วนการกรน: {snore_percent:.1f}%\n⏰ ช่วงที่กรนบ่อยสุด: {peak_time_str}\n🌡️ อุณหภูมิห้อง: {temp}°C\n\nอย่าลืมดื่มน้ำเยอะๆ นะครับ!"
         
-        # ปุ่มสำหรับกดส่งรายงานเข้า LINE ตอนเช้า
-        if st.button("📲 ส่งสรุปผลเมื่อคืนเข้า LINE", type="primary"):
-            msg = f"\n☀️ สรุปผลการนอนหลับเมื่อคืน 💤\n\n🛌 จำนวนครั้งที่กรน: {snore_count} ครั้ง\n📊 คิดเป็น: {snore_percent:.1f}% ของเวลาทั้งหมด\n⏰ ช่วงที่กรนบ่อยสุด: {peak_time_str}\n🌡️ อุณหภูมิห้อง: {temp}°C\n\nดูแลสุขภาพและดื่มน้ำเยอะๆ นะครับ!"
-            status = send_line_message(msg)
+        st.write("") 
+        
+        # ปุ่มกดส่งเอง (Manual)
+        if st.button("📲 ทดสอบส่งรายงานนี้เข้า LINE", type="primary"):
+            status = send_line_message(report_msg)
             if status == 200:
-                st.success("ส่งรายงานสรุปผลเข้า LINE สำเร็จ!")
+                st.success("ส่งรายงานเข้า LINE สำเร็จ!")
             else:
                 st.error("ส่ง LINE ไม่สำเร็จ")
+                
+        # ---------------------------------
+        # ระบบเช็คเวลาส่ง LINE อัตโนมัติ (Auto Trigger)
+        # ---------------------------------
+        now = datetime.now()
+        
+        # ถ้าเวลาปัจจุบัน ตรงกับเวลาที่ตั้งไว้ (ชั่วโมงและนาทีตรงกัน)
+        if now.hour == alert_time.hour and now.minute == alert_time.minute:
+            # เช็คว่าวันนี้เคยส่งไปหรือยัง (กันมันส่งซ้ำรัวๆ ภายใน 1 นาทีนั้น)
+            if st.session_state.last_sent_date != now.date():
+                status = send_line_message(report_msg)
+                if status == 200:
+                    st.session_state.last_sent_date = now.date() # บันทึกว่าวันนี้ส่งแล้ว
+                    st.toast(f"ส่งรายงานอัตโนมัติตอน {alert_time.strftime('%H:%M')} สำเร็จ!", icon="✅")
+                    
     else:
-        st.info("ไม่มีข้อมูลการนอนหลับในช่วง 12 ชั่วโมงที่ผ่านมา")
+        st.info("ไม่มีข้อมูลการนอนหลับในคืนวันที่คุณเลือก")
 
 # ==========================================
 # 7. ระบบหน่วงเวลาเพื่อ Refresh หน้าเว็บอัตโนมัติ
