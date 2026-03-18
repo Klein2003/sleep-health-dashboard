@@ -224,16 +224,17 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_chart.loc[end_time_stats] = np.nan
         df_chart.sort_index(inplace=True)
 
-        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน (แบบ Area Chart ทึบๆ)
+        # 🌟 กลับมาใช้ กราฟเส้น (Line Chart) ตามที่ต้องการ
+        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
         st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
-        st.area_chart(df_chart[['prob']], color="#FF4B4B")
+        st.line_chart(df_chart[['prob']], color="#FF4B4B")
         
-        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน (แบบ Scatter Chart จุดไข่ปลา)
+        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
         st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
-        st.scatter_chart(df_chart[['pose_num']], color="#1f77b4")
+        st.line_chart(df_chart[['pose_num']], color="#1f77b4")
         st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
         
-        # กราฟชั้นที่ 3: อุณหภูมิและความชื้น (แบบ Line Chart เส้นต่อเนื่อง)
+        # กราฟชั้นที่ 3: อุณหภูมิและความชื้น
         st.subheader("🌡️ สภาพแวดล้อมห้องนอน (อุณหภูมิ & ความชื้น)")
         if 'temp' in df_chart.columns and 'hum' in df_chart.columns:
             st.line_chart(df_chart[['temp', 'hum']])
