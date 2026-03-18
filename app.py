@@ -202,11 +202,22 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_chart = df_stats.copy()
         df_chart.set_index('time', inplace=True)
 
-        # 🌟 1. ปรับกราฟการกรนให้สมูทขึ้น (Moving Average 12 ค่า = ประมาณ 1 นาที)
-        df_chart['prob_smooth'] = df_chart['prob'].rolling(window=12, min_periods=1).mean()
+        # กำจัดข้อมูลที่เวลาซ้ำกัน ป้องกันระบบรวน
+        df_chart = df_chart[~df_chart.index.duplicated(keep='last')]
+
+        # 🌟🌟 หัวใจสำคัญ: เติมเวลาให้เดินต่อเนื่องทุกๆ 5 วินาที
+        df_chart = df_chart.resample('5S').mean(numeric_only=True)
+
+        # 🌟🌟 จัดการกับช่วงเวลาที่ว่างเปล่า (ช่วงที่ AI ปิด)
+        df_chart['prob'] = df_chart['prob'].fillna(0) # ถ้า AI ดับ ให้กราฟตกมาที่ศูนย์!
+        df_chart['pose_num'] = df_chart['pose_num'].ffill() # ท่านอน ค้างท่าเดิมไว้
         
-        # 🌟 2. ปรับกราฟท่านอนให้เชื่อมต่อกัน ไม่แหว่ง (Forward Fill)
-        df_chart['pose_num_smooth'] = df_chart['pose_num'].ffill()
+        if 'temp' in df_chart.columns and 'hum' in df_chart.columns:
+            df_chart['temp'] = df_chart['temp'].ffill() # อุณหภูมิ ค้างค่าล่าสุดไว้
+            df_chart['hum'] = df_chart['hum'].ffill()
+
+        # 🌟🌟 ทำให้กราฟโค้งสมูทเป็นคลื่น (Moving Average 1 นาที)
+        df_chart['prob_smooth'] = df_chart['prob'].rolling(window=12, min_periods=1).mean()
 
         # 📌 ปักหมุดแกน X ให้ล็อคความกว้างตามเวลา
         df_chart.loc[start_time_stats] = np.nan
@@ -219,7 +230,7 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         
         # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
         st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
-        st.line_chart(df_chart[['pose_num_smooth']], color="#1f77b4")
+        st.line_chart(df_chart[['pose_num']], color="#1f77b4")
         st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
         
         # กราฟชั้นที่ 3: อุณหภูมิและความชื้น
@@ -231,6 +242,7 @@ elif page == "📈 กราฟสถิติ (Statistics)":
 
         st.divider()
         st.subheader("📋 ตารางข้อมูลบันทึกทั้งหมด (Log)")
+        # ตารางข้อมูลดิบ เราใช้ df_stats ต้นฉบับเหมือนเดิม เพื่อไม่ให้ข้อมูลที่เราเติมหลอกๆ ไปโชว์ในตาราง
         st.dataframe(
             df_stats[['time', 'snore', 'prob', 'pose', 'temp', 'hum'] if 'temp' in df_stats.columns else ['time', 'snore', 'prob', 'pose']].sort_values(by='time', ascending=False),
             use_container_width=True,
