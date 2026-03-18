@@ -224,15 +224,7 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_chart.loc[end_time_stats] = np.nan
         df_chart.sort_index(inplace=True)
 
-        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
-        st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
-        st.line_chart(df_chart[['prob']], color="#FF4B4B")
-        
-        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
-        st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
-        # วาดเฉพาะข้อมูลที่สามารถแปลงเป็นตัวเลขได้
-        st.line_chart(df_chart[['pose_num']], color="#1f77b4")
-        st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
+       pyinstaller --onedir --windowed --icon=NONE body_snoring_detection.py
         
         # กราฟชั้นที่ 3: อุณหภูมิและความชื้น
         st.subheader("🌡️ สภาพแวดล้อมห้องนอน (อุณหภูมิ & ความชื้น)")
