@@ -35,7 +35,7 @@ if not firebase_admin._apps:
 # ==========================================
 # 3. การตั้งค่าหน้าเว็บ และ ตัวแปรความจำ
 # ==========================================
-st.set_page_config(page_title="Sleep Health Dashboard", page_icon="💤", layout="wide")
+st.set_page_config(page_title="Sleeping Dashboard", page_icon="💤", layout="wide")
 
 if 'last_sent_date' not in st.session_state:
     st.session_state.last_sent_date = None
@@ -83,7 +83,7 @@ if all_sleep_data:
 # หน้าที่ 1: หน้าหลัก (Dashboard)
 # ------------------------------------------
 if page == "🏠 หน้าหลัก (Dashboard)":
-    st.title("💤 AI รายงานสุขภาพการนอนหลับ")
+    st.title("💤 AI รายงานการนอนหลับ")
     st.markdown("ระบบมอนิเตอร์สถานะ Real-time และสรุปสถิติการนอนหลับประจำวัน")
     st.divider()
 
