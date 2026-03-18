@@ -70,7 +70,6 @@ hum = sensor_data.get('humidity', '-') if sensor_data else '-'
 ref_sleep = db.reference('sleep_data')
 all_sleep_data = ref_sleep.get()
 
-# แปลงข้อมูลทั้งหมดเป็น DataFrame เตรียมไว้
 df_all = pd.DataFrame()
 if all_sleep_data:
     df_all = pd.DataFrame.from_dict(all_sleep_data, orient='index')
@@ -81,7 +80,7 @@ if all_sleep_data:
 # ==========================================
 
 # ------------------------------------------
-# หน้าที่ 1: หน้าหลัก (Dashboard) - ข้อมูลรายวันเสมอ
+# หน้าที่ 1: หน้าหลัก (Dashboard)
 # ------------------------------------------
 if page == "🏠 หน้าหลัก (Dashboard)":
     st.title("💤 AI รายงานสุขภาพการนอนหลับ")
@@ -109,7 +108,6 @@ if page == "🏠 หน้าหลัก (Dashboard)":
     st.divider()
     st.subheader("📊 สรุปผลการนอนหลับเบื้องต้น")
 
-    # สำหรับหน้าหลัก จะบังคับดูแค่ 1 คืนเสมอ (18:00 เมื่อวาน ถึง 18:00 วันนี้)
     start_time_daily = datetime.combine(selected_date - timedelta(days=1), dt_time(18, 0))
     end_time_daily = datetime.combine(selected_date, dt_time(18, 0))
     
@@ -157,74 +155,63 @@ if page == "🏠 หน้าหลัก (Dashboard)":
         st.info("ไม่มีข้อมูลการนอนหลับในคืนวันที่คุณเลือก")
 
 # ------------------------------------------
-# หน้าที่ 2: กราฟสถิติ (Statistics) - แบบเลือกช่วงเวลาได้
+# หน้าที่ 2: กราฟสถิติ (Statistics)
 # ------------------------------------------
 elif page == "📈 กราฟสถิติ (Statistics)":
-    st.title("📈 กราฟวิเคราะห์พฤติกรรมการนอนหลับ")
+    st.title("📈 ไทม์ไลน์พฤติกรรมการนอนหลับ (Time-Series)")
     
-    # 🌟 เมนูเลือกช่วงเวลาสถิติ
     time_range = st.selectbox("📅 เลือกช่วงเวลาการดูสถิติ:", 
                               ["รายวัน (1 คืน)", "รายสัปดาห์ (7 วันย้อนหลัง)", "รายเดือน (30 วันย้อนหลัง)", "รายปี (365 วันย้อนหลัง)"])
     
-    # คำนวณวันย้อนหลังตามตัวเลือก
-    if time_range == "รายวัน (1 คืน)":
-        days_back = 1
-    elif time_range == "รายสัปดาห์ (7 วันย้อนหลัง)":
-        days_back = 7
-    elif time_range == "รายเดือน (30 วันย้อนหลัง)":
-        days_back = 30
-    else:
-        days_back = 365
+    if time_range == "รายวัน (1 คืน)": days_back = 1
+    elif time_range == "รายสัปดาห์ (7 วันย้อนหลัง)": days_back = 7
+    elif time_range == "รายเดือน (30 วันย้อนหลัง)": days_back = 30
+    else: days_back = 365
         
     start_time_stats = datetime.combine(selected_date - timedelta(days=days_back), dt_time(18, 0))
     end_time_stats = datetime.combine(selected_date, dt_time(18, 0))
 
-    st.markdown(f"ข้อมูลตั้งแต่ **{start_time_stats.strftime('%d/%m/%Y')}** ถึง **{end_time_stats.strftime('%d/%m/%Y')}**")
+    st.markdown(f"ข้อมูลตั้งแต่ **{start_time_stats.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time_stats.strftime('%d/%m/%Y %H:%M')}**")
     st.divider()
 
     df_stats = pd.DataFrame()
     if not df_all.empty:
-        df_stats = df_all[(df_all['time'] >= start_time_stats) & (df_all['time'] <= end_time_stats)]
+        df_stats = df_all[(df_all['time'] >= start_time_stats) & (df_all['time'] <= end_time_stats)].copy()
 
     if not df_stats.empty:
-        col_chart1, col_chart2 = st.columns(2)
+        # ตั้งค่าให้แกน X เป็นเวลา
+        df_stats.set_index('time', inplace=True)
         
-        # กราฟที่ 1: ความถี่ของการกรน (ปรับตามช่วงเวลาที่เลือก)
-        with col_chart1:
-            st.subheader("🗣️ ความถี่ของการกรน")
-            snore_df = df_stats[df_stats['snore'] == "SNORING"].copy()
-            if not snore_df.empty:
-                # ถ้าดูรายวัน ให้กรุ๊ปข้อมูลเป็นรายชั่วโมง / ถ้าดูมากกว่านั้น ให้กรุ๊ปเป็นรายวัน
-                if time_range == "รายวัน (1 คืน)":
-                    snore_df['group'] = snore_df['time'].dt.strftime('%H:00')
-                    st.caption("แสดงสถิติเป็นรายชั่วโมง")
-                else:
-                    snore_df['group'] = snore_df['time'].dt.strftime('%d/%m/%Y')
-                    st.caption("แสดงสถิติรวมในแต่ละวัน")
-                    
-                snore_by_group = snore_df['group'].value_counts().sort_index()
-                st.bar_chart(snore_by_group, color="#FF4B4B")
-            else:
-                st.success("ไม่พบการกรนในช่วงเวลานี้ เยี่ยมมากครับ!")
+        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
+        st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
+        st.line_chart(df_stats[['prob']], color="#FF4B4B")
+        
+        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
+        st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
+        def pose_to_num(p):
+            if p == "Face up/down": return 1.0
+            elif p == "Side": return 2.0
+            else: return None
+            
+        df_stats['pose_num'] = df_stats['pose'].apply(pose_to_num)
+        pose_chart_df = df_stats.dropna(subset=['pose_num'])
+        
+        if not pose_chart_df.empty:
+            st.line_chart(pose_chart_df[['pose_num']], color="#1f77b4")
+            st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
+        
+        # กราฟชั้นที่ 3: อุณหภูมิและความชื้น
+        st.subheader("🌡️ สภาพแวดล้อมห้องนอน (อุณหภูมิ & ความชื้น)")
+        if 'temp' in df_stats.columns and 'hum' in df_stats.columns:
+            st.line_chart(df_stats[['temp', 'hum']])
+        else:
+            st.info("⏳ ไม่พบประวัติอุณหภูมิและความชื้นในข้อมูลชุดเก่า (ระบบจะเริ่มแสดงเมื่อมีข้อมูลใหม่เข้ามา)")
 
-        # กราฟที่ 2: สัดส่วนท่านอนรวม
-        with col_chart2:
-            st.subheader("🛌 สัดส่วนท่านอน (รวมทั้งหมด)")
-            st.caption("จำนวนครั้งที่ตรวจจับได้ในช่วงเวลานี้")
-            pose_counts = df_stats['pose'].value_counts()
-            if "WAITING" in pose_counts:
-                pose_counts = pose_counts.drop("WAITING")
-                
-            if not pose_counts.empty:
-                st.bar_chart(pose_counts, color="#1f77b4")
-            else:
-                st.info("ไม่มีข้อมูลท่านอนที่สมบูรณ์")
-                
         # แสดงตารางข้อมูลดิบ
         st.divider()
         st.subheader("📋 ตารางข้อมูลบันทึกทั้งหมด (Log)")
         st.dataframe(
-            df_stats[['time', 'snore', 'prob', 'pose']].sort_values(by='time', ascending=False),
+            df_stats[['snore', 'prob', 'pose', 'temp', 'hum'] if 'temp' in df_stats.columns else ['snore', 'prob', 'pose']].sort_index(ascending=False),
             use_container_width=True
         )
     else:
