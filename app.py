@@ -23,91 +23,55 @@ def send_line_message(message):
     return response.status_code
 
 # ==========================================
-# 2. ตั้งค่าเชื่อมต่อ Firebase (รันบนเครื่อง Local)
+# 2. ตั้งค่าเชื่อมต่อ Firebase (เวอร์ชัน Cloud ปลอดภัย 100%)
 # ==========================================
 if not firebase_admin._apps:
-    # โหลดจากไฟล์ JSON โดยตรง (เหมาะกับการรันเทสต์บนเครื่องคอมพิวเตอร์ตัวเอง)
-    cred = credentials.Certificate("firebase_key.json")
+    # ดึงกุญแจจาก "ตู้เซฟ (Secrets)" ของ Streamlit แทนการอ่านไฟล์ json ตรงๆ
+    firebase_credentials = dict(st.secrets["firebase"])
+    cred = credentials.Certificate(firebase_credentials)
+    
     firebase_admin.initialize_app(cred, {
+        # ⚠️ เปลี่ยนลิงก์ตรงนี้เป็น URL ของคุณเหมือนเดิมครับ
         'databaseURL': 'https://sleep-health-monitor-default-rtdb.asia-southeast1.firebasedatabase.app/'
     })
 
 # ==========================================
 # 3. หน้าตาเว็บ Dashboard (Streamlit)
 # ==========================================
-st.set_page_config(page_title="Sleep Health Dashboard", page_icon="💤", layout="centered")
-
+st.set_page_config(page_title="Sleep Health Monitor", layout="centered")
 st.title("💤 AI ตรวจจับสุขภาพการนอน")
-st.markdown("มอนิเตอร์สภาพแวดล้อมและพฤติกรรมการนอนหลับแบบ Real-time")
-
-st.divider()
 
 # ปุ่มสำหรับกดดึงข้อมูลล่าสุดจาก Firebase
-if st.button("🔄 อัปเดตข้อมูลล่าสุด", type="primary", use_container_width=True):
+if st.button("🔄 อัปเดตข้อมูลจากเซนเซอร์", type="primary"):
     
-    # ---------------------------------
-    # ดึงข้อมูลอุณหภูมิ/ความชื้น (จาก ESP32 ตัวที่ 2)
-    # ---------------------------------
-    ref_sensor = db.reference('sensor_data')
-    sensor_data = ref_sensor.get()
+    # ดึงข้อมูลจากโฟลเดอร์ sleep_data
+    ref = db.reference('sleep_data')
+    all_data = ref.get()
     
-    temp = sensor_data.get('temperature', '-') if sensor_data else '-'
-    hum = sensor_data.get('humidity', '-') if sensor_data else '-'
-
-    st.subheader("🌡️ สภาพแวดล้อมห้องนอน")
-    col_t, col_h = st.columns(2)
-    col_t.metric("อุณหภูมิ", f"{temp} °C")
-    col_h.metric("ความชื้นสัมพัทธ์", f"{hum} %")
-    
-    st.divider()
-
-    # ---------------------------------
-    # ดึงข้อมูลการนอน (จาก AI กล้อง+ไมค์)
-    # ---------------------------------
-    ref_sleep = db.reference('sleep_data')
-    all_sleep_data = ref_sleep.get()
-    
-    if all_sleep_data:
-        # ดึงข้อมูลก้อนล่าสุด (ตัวสุดท้ายใน Dictionary)
-        latest_key = list(all_sleep_data.keys())[-1]
-        latest_data = all_sleep_data[latest_key]
+    if all_data:
+        # ข้อมูลใน Firebase ที่ใช้ .push() จะสุ่มคีย์ยาวๆ มาให้ เราต้องดึงอันล่าสุดมา (ตัวสุดท้าย)
+        latest_key = list(all_data.keys())[-1]
+        latest_data = all_data[latest_key]
         
-        # ดึงค่าต่างๆ ออกมา (ใช้ชื่อคีย์ให้ตรงกับในฐานข้อมูลจริง)
-        db_time = latest_data.get("time", "-")[:19] # ตัดให้เหลือแค่เวลา
-        db_pose = latest_data.get("pose", "-")
-        db_snore = latest_data.get("snore", "-")
-        db_prob = latest_data.get("prob", 0.0)
-        
-        st.subheader("🛌 สถานะการนอนหลับล่าสุด")
-        
+        # แสดงผลบนหน้าเว็บ
+        st.subheader("📊 สถานะปัจจุบัน")
         col1, col2, col3 = st.columns(3)
-        col1.metric("เวลาบันทึก", db_time)
-        col2.metric("ท่านอน", db_pose)
+        col1.metric("เวลาบันทึก", latest_data.get("timestamp", "-")[:16])
+        col2.metric("ท่านอน", latest_data.get("sleep_pose", "-"))
+        col3.metric("เสียงกรน", "ตรวจพบ!" if latest_data.get("snoring") else "ปกติ")
         
-        # ตกแต่งสีให้สถานะการกรน
-        if db_snore == "SNORING":
-            col3.metric("เสียงกรน", "🔴 ตรวจพบ!")
-        elif db_snore == "NORMAL":
-            col3.metric("เสียงกรน", "🟢 ปกติ")
-        else:
-            col3.metric("เสียงกรน", "⏳ รอวิเคราะห์")
-
-        # แถบแสดงความน่าจะเป็นในการกรน
-        st.progress(min(db_prob, 1.0), text=f"ความน่าจะเป็นที่กำลังกรน: {db_prob*100:.1f}%")
-        
-        # ---------------------------------
-        # ระบบส่ง LINE แจ้งเตือน
-        # ---------------------------------
-        if db_snore == "SNORING":
-            st.error("⚠️ ผู้ใช้งานกำลังกรนเสียงดัง ระบบกำลังแจ้งเตือนไปยัง LINE!")
+        # ถ้าระบุว่ามีการกรน ให้ส่ง LINE แจ้งเตือน
+        if latest_data.get("snoring") == True:
+            st.warning(f"⚠️ {latest_data.get('warning_level')}")
             
-            # จัดฟอร์แมตข้อความส่ง LINE
-            msg = f"\n⚠️ แจ้งเตือนจากระบบ!\n🛌 ท่านอน: {db_pose}\n🗣️ สถานะ: มีอาการกรน ({db_prob*100:.1f}%)\n🌡️ อุณหภูมิห้อง: {temp}°C"
+            # ส่งแจ้งเตือน
+            dashboard_url = "http://10.20.51.119:8501" # สามารถเปลี่ยนเป็นลิงก์ที่ต้องการได้
+            msg = f"\n⚠️ แจ้งเตือนจากระบบ!\nท่านอน: {latest_data.get('sleep_pose')}\nสถานะ: {latest_data.get('warning_level')}\nดูข้อมูล: {dashboard_url}"
             
             line_status = send_line_message(msg)
             if line_status == 200:
-                st.toast("ส่งแจ้งเตือนเข้า LINE สำเร็จ!", icon="✅")
+                st.success("ส่งแจ้งเตือนเข้า LINE สำเร็จ!")
             else:
-                st.toast("ส่ง LINE ไม่สำเร็จ", icon="❌")
+                st.error("ส่ง LINE ไม่สำเร็จ")
     else:
-        st.info("ยังไม่มีข้อมูลการนอนในระบบ")
+        st.info("ยังไม่มีข้อมูลในระบบ")
