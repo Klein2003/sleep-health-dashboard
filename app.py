@@ -193,60 +193,42 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_stats = df_all[(df_all['time'] >= start_time_stats) & (df_all['time'] <= end_time_stats)].copy()
 
     if not df_stats.empty:
+        # 🌟 ตั้งค่าให้แกน X เป็น "เวลา" สำหรับกราฟเส้น
+        df_stats.set_index('time', inplace=True)
+        
+        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
+        st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
+        st.line_chart(df_stats[['prob']], color="#FF4B4B")
+        
+        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
+        st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
+        # แปลงข้อความท่านอนให้เป็นตัวเลขเพื่อวาดกราฟเส้นได้
         def pose_to_num(p):
             if p == "Face up/down": return 1.0
             elif p == "Side": return 2.0
             else: return None
+            
         df_stats['pose_num'] = df_stats['pose'].apply(pose_to_num)
-
-        df_chart = df_stats.copy()
-        df_chart.set_index('time', inplace=True)
-
-        # กำจัดข้อมูลที่เวลาซ้ำกัน ป้องกันระบบรวน
-        df_chart = df_chart[~df_chart.index.duplicated(keep='last')]
-
-        # 🌟🌟 หัวใจสำคัญ: เติมเวลาให้เดินต่อเนื่องทุกๆ 5 วินาที
-        df_chart = df_chart.resample('5S').mean(numeric_only=True)
-
-        # 🌟🌟 จัดการกับช่วงเวลาที่ว่างเปล่า (ช่วงที่ AI ปิด)
-        df_chart['prob'] = df_chart['prob'].fillna(0) # ถ้า AI ดับ ให้กราฟตกมาที่ศูนย์!
-        df_chart['pose_num'] = df_chart['pose_num'].ffill() # ท่านอน ค้างท่าเดิมไว้
+        pose_chart_df = df_stats.dropna(subset=['pose_num'])
         
-        if 'temp' in df_chart.columns and 'hum' in df_chart.columns:
-            df_chart['temp'] = df_chart['temp'].ffill() # อุณหภูมิ ค้างค่าล่าสุดไว้
-            df_chart['hum'] = df_chart['hum'].ffill()
-
-        # 🌟🌟 ทำให้กราฟโค้งสมูทเป็นคลื่น (Moving Average 1 นาที)
-        df_chart['prob_smooth'] = df_chart['prob'].rolling(window=12, min_periods=1).mean()
-
-        # 📌 ปักหมุดแกน X ให้ล็อคความกว้างตามเวลา
-        df_chart.loc[start_time_stats] = np.nan
-        df_chart.loc[end_time_stats] = np.nan
-        df_chart.sort_index(inplace=True)
-
-        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
-        st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
-        st.line_chart(df_chart[['prob_smooth']], color="#FF4B4B")
-        
-        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
-        st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
-        st.line_chart(df_chart[['pose_num']], color="#1f77b4")
-        st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
+        if not pose_chart_df.empty:
+            st.line_chart(pose_chart_df[['pose_num']], color="#1f77b4")
+            st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
         
         # กราฟชั้นที่ 3: อุณหภูมิและความชื้น
         st.subheader("🌡️ สภาพแวดล้อมห้องนอน (อุณหภูมิ & ความชื้น)")
-        if 'temp' in df_chart.columns and 'hum' in df_chart.columns:
-            st.line_chart(df_chart[['temp', 'hum']])
+        # ตรวจสอบว่ามีคอลัมน์ temp และ hum ในฐานข้อมูลแล้วหรือยัง
+        if 'temp' in df_stats.columns and 'hum' in df_stats.columns:
+            st.line_chart(df_stats[['temp', 'hum']])
         else:
-            st.info("⏳ ไม่พบประวัติอุณหภูมิและความชื้นในข้อมูลชุดเก่า (ระบบจะเริ่มแสดงเมื่อมีข้อมูลใหม่เข้ามา)")
+            st.info("⏳ ไม่พบประวัติอุณหภูมิและความชื้น (กำลังรอรับข้อมูลรูปแบบใหม่ที่คุณเพิ่งอัปเดตครับ)")
 
+        # แสดงตารางข้อมูลดิบ
         st.divider()
         st.subheader("📋 ตารางข้อมูลบันทึกทั้งหมด (Log)")
-        # ตารางข้อมูลดิบ เราใช้ df_stats ต้นฉบับเหมือนเดิม เพื่อไม่ให้ข้อมูลที่เราเติมหลอกๆ ไปโชว์ในตาราง
         st.dataframe(
-            df_stats[['time', 'snore', 'prob', 'pose', 'temp', 'hum'] if 'temp' in df_stats.columns else ['time', 'snore', 'prob', 'pose']].sort_values(by='time', ascending=False),
-            use_container_width=True,
-            hide_index=True
+            df_stats[['snore', 'prob', 'pose', 'temp', 'hum'] if 'temp' in df_stats.columns else ['snore', 'prob', 'pose']].sort_index(ascending=False),
+            use_container_width=True
         )
     else:
         st.warning("⚠️ ไม่มีข้อมูลสำหรับการสร้างกราฟในช่วงเวลาที่คุณเลือกครับ")
