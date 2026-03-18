@@ -5,6 +5,7 @@ import firebase_admin
 from firebase_admin import credentials, db
 import pandas as pd
 import numpy as np
+import altair as alt  # 🌟 เพิ่มไลบรารีกราฟระดับโปร (ไม่ต้อง pip install เพิ่ม)
 from datetime import datetime, timedelta, time as dt_time
 import time
 
@@ -171,9 +172,6 @@ if page == "🏠 หน้าหลัก (Dashboard)":
 # ------------------------------------------
 # หน้าที่ 2: กราฟสถิติ (Statistics)
 # ------------------------------------------
-# ------------------------------------------
-# หน้าที่ 2: กราฟสถิติ (Statistics)
-# ------------------------------------------
 elif page == "📈 กราฟสถิติ (Statistics)":
     st.title("📈 ไทม์ไลน์พฤติกรรมการนอนหลับ (Time-Series)")
     
@@ -196,42 +194,74 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_stats = df_all[(df_all['time'] >= start_time_stats) & (df_all['time'] <= end_time_stats)].copy()
 
     if not df_stats.empty:
-        # 🌟 ตั้งค่าให้แกน X เป็น "เวลา" สำหรับกราฟเส้น
-        df_stats.set_index('time', inplace=True)
-        
-        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
-        st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
-        st.line_chart(df_stats[['prob']], color="#FF4B4B")
-        
-        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
-        st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
-        # แปลงข้อความท่านอนให้เป็นตัวเลขเพื่อวาดกราฟเส้นได้
         def pose_to_num(p):
             if p == "Face up/down": return 1.0
             elif p == "Side": return 2.0
             else: return None
             
         df_stats['pose_num'] = df_stats['pose'].apply(pose_to_num)
-        pose_chart_df = df_stats.dropna(subset=['pose_num'])
+
+        # 🌟 1. ลบ "สะพานเวลา" (เส้นข้ามอากาศตอนที่ AI ปิดเครื่อง)
+        df_chart = df_stats.copy()
+        df_chart.set_index('time', inplace=True)
+        df_chart = df_chart[~df_chart.index.duplicated(keep='last')]
+        # คำสั่ง asfreq() จะเติมช่วงที่หายไปให้เป็นค่าว่าง (NaN) กราฟจะได้ขาดออกจากกันตรงที่เครื่องดับ
+        df_chart = df_chart.resample('5S').asfreq() 
+        df_chart.reset_index(inplace=True) # เอา time กลับมาเป็นคอลัมน์เพื่อส่งให้ Altair วาด
+
+        # 🌟 2. ฟังก์ชันวาดกราฟที่ปรับแต่ง Tooltip ได้ละเอียดระดับวินาที
+        def create_custom_chart(data, y_col, y_title, color_hex):
+            chart = alt.Chart(data).mark_line(color=color_hex, point=False).encode(
+                x=alt.X('time:T', title='เวลา', 
+                        axis=alt.Axis(format='%H:%M'), 
+                        scale=alt.Scale(domain=[start_time_stats.isoformat(), end_time_stats.isoformat()]) # ล็อคแกน x
+                       ),
+                y=alt.Y(f'{y_col}:Q', title=y_title),
+                tooltip=[
+                    # 📌 ปรับฟอร์แมตวันที่และเวลาที่นี่ได้เลย (%d=วัน %m=เดือน %Y=ปี %H:%M:%S=ชั่วโมง:นาที:วินาที)
+                    alt.Tooltip('time:T', title='วันที่และเวลา', format='%d/%m/%Y %H:%M:%S'),
+                    alt.Tooltip(f'{y_col}:Q', title=y_title)
+                ]
+            ).interactive()
+            return chart
+
+        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
+        st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
+        st.altair_chart(create_custom_chart(df_chart, 'prob', 'ความน่าจะเป็น (0-1)', '#FF4B4B'), use_container_width=True)
         
-        if not pose_chart_df.empty:
-            st.line_chart(pose_chart_df[['pose_num']], color="#1f77b4")
-            st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
+        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
+        st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
+        st.altair_chart(create_custom_chart(df_chart, 'pose_num', '1.0=หงาย/คว่ำ, 2.0=ตะแคง', '#1f77b4'), use_container_width=True)
         
         # กราฟชั้นที่ 3: อุณหภูมิและความชื้น
         st.subheader("🌡️ สภาพแวดล้อมห้องนอน (อุณหภูมิ & ความชื้น)")
-        # ตรวจสอบว่ามีคอลัมน์ temp และ hum ในฐานข้อมูลแล้วหรือยัง
-        if 'temp' in df_stats.columns and 'hum' in df_stats.columns:
-            st.line_chart(df_stats[['temp', 'hum']])
+        if 'temp' in df_chart.columns and 'hum' in df_chart.columns:
+            # ละลายข้อมูล (Melt) เพื่อวาด 2 เส้น (อุณหภูมิ และ ความชื้น) ในกราฟเดียวกัน
+            df_env = df_chart[['time', 'temp', 'hum']].melt('time', var_name='Sensor', value_name='Value')
+            env_chart = alt.Chart(df_env).mark_line(point=False).encode(
+                x=alt.X('time:T', title='เวลา', 
+                        axis=alt.Axis(format='%H:%M'),
+                        scale=alt.Scale(domain=[start_time_stats.isoformat(), end_time_stats.isoformat()])
+                       ),
+                y=alt.Y('Value:Q', title='ค่าที่วัดได้'),
+                color=alt.Color('Sensor:N', legend=alt.Legend(title="ชนิดเซนเซอร์")),
+                tooltip=[
+                    alt.Tooltip('time:T', title='วันที่และเวลา', format='%d/%m/%Y %H:%M:%S'),
+                    alt.Tooltip('Sensor:N', title='เซนเซอร์'),
+                    alt.Tooltip('Value:Q', title='ค่าที่บันทึก')
+                ]
+            ).interactive()
+            st.altair_chart(env_chart, use_container_width=True)
         else:
-            st.info("⏳ ไม่พบประวัติอุณหภูมิและความชื้น (กำลังรอรับข้อมูลรูปแบบใหม่ที่คุณเพิ่งอัปเดตครับ)")
+            st.info("⏳ ไม่พบประวัติอุณหภูมิและความชื้นในข้อมูลชุดเก่า (ระบบจะเริ่มแสดงเมื่อมีข้อมูลใหม่เข้ามา)")
 
         # แสดงตารางข้อมูลดิบ
         st.divider()
         st.subheader("📋 ตารางข้อมูลบันทึกทั้งหมด (Log)")
         st.dataframe(
-            df_stats[['snore', 'prob', 'pose', 'temp', 'hum'] if 'temp' in df_stats.columns else ['snore', 'prob', 'pose']].sort_index(ascending=False),
-            use_container_width=True
+            df_stats[['time', 'snore', 'prob', 'pose', 'temp', 'hum'] if 'temp' in df_stats.columns else ['time', 'snore', 'prob', 'pose']].sort_values(by='time', ascending=False),
+            use_container_width=True,
+            hide_index=True
         )
     else:
         st.warning("⚠️ ไม่มีข้อมูลสำหรับการสร้างกราฟในช่วงเวลาที่คุณเลือกครับ")
