@@ -37,17 +37,20 @@ if not firebase_admin._apps:
 # ==========================================
 st.set_page_config(page_title="Sleep Health Dashboard", page_icon="💤", layout="wide")
 
-# สร้างตัวความจำว่า "วันนี้ส่ง LINE ไปหรือยัง?"
 if 'last_sent_date' not in st.session_state:
     st.session_state.last_sent_date = None
 
-# 🌟 จัดการ Timezone ให้เป็นเวลาประเทศไทย (UTC+7) เสมอ
 thai_time = datetime.utcnow() + timedelta(hours=7)
 current_date = thai_time.date()
 
 # ==========================================
-# เมนูด้านข้าง (Sidebar) สำหรับตั้งค่าเวลา
+# เมนูด้านข้าง (Sidebar)
 # ==========================================
+st.sidebar.title("📌 เมนูนำทาง")
+# 🌟 สร้างปุ่มเลือกหน้า
+page = st.sidebar.radio("เลือกหน้าต่างแสดงผล:", ["🏠 หน้าหลัก (Dashboard)", "📈 กราฟสถิติ (Statistics)"])
+
+st.sidebar.divider()
 st.sidebar.title("⚙️ ตั้งค่าระบบ")
 auto_refresh = st.sidebar.toggle("🔄 อัปเดตอัตโนมัติ (ทุก 10 วินาที)", value=True)
 
@@ -55,12 +58,8 @@ st.sidebar.divider()
 st.sidebar.subheader("⏰ ตั้งเวลาส่งรายงาน (LINE)")
 alert_time = st.sidebar.time_input("เลือกเวลาส่งสรุปผล", value=dt_time(8, 0))
 
-st.title("💤 AI รายงานสุขภาพการนอนหลับ")
-st.markdown("ระบบมอนิเตอร์สถานะ Real-time และสรุปสถิติการนอนหลับประจำวัน")
-st.divider()
-
 # ==========================================
-# 4. ดึงข้อมูลจาก Firebase
+# 4. ดึงข้อมูลและจัดการข้อมูล (ทำครั้งเดียวใช้ได้ทุกหน้า)
 # ==========================================
 ref_sensor = db.reference('sensor_data')
 sensor_data = ref_sensor.get()
@@ -70,52 +69,56 @@ hum = sensor_data.get('humidity', '-') if sensor_data else '-'
 ref_sleep = db.reference('sleep_data')
 all_sleep_data = ref_sleep.get()
 
-# ==========================================
-# 5. ส่วนแสดงผล Real-time (สถานะปัจจุบัน)
-# ==========================================
-st.subheader("🔴 สถานะ ณ เวลานี้")
-col_t, col_h, col_pose, col_snore = st.columns(4)
-col_t.metric("อุณหภูมิห้อง", f"{temp} °C")
-col_h.metric("ความชื้น", f"{hum} %")
+# ให้ผู้ใช้เลือกวันที่ต้องการดูสถิติ (ย้ายมาไว้ข้างนอกเพื่อให้มีผลกับทั้ง 2 หน้า)
+selected_date = st.sidebar.date_input("📅 เลือกวันที่ดึงข้อมูล", value=current_date)
 
-if all_sleep_data:
-    latest_key = list(all_sleep_data.keys())[-1]
-    latest_data = all_sleep_data[latest_key]
-    col_pose.metric("ท่านอนปัจจุบัน", latest_data.get("pose", "-"))
-    
-    snore_status = latest_data.get("snore", "-")
-    if snore_status == "SNORING":
-        col_snore.metric("เสียงรบกวน", "🔴 กำลังกรน!")
-    else:
-        col_snore.metric("เสียงรบกวน", "🟢 เงียบปกติ")
-else:
-    st.info("ยังไม่มีข้อมูลแบบ Real-time")
-
-st.divider()
-
-# ==========================================
-# 6. ส่วนวิเคราะห์และสรุปผลประจำวัน
-# ==========================================
-st.subheader("📊 สรุปผลการนอนหลับ")
-
-selected_date = st.date_input("เลือกวันที่ต้องการดูรายงาน", value=current_date)
+df_night = pd.DataFrame() # สร้างตัวแปรว่างไว้ก่อน
+start_time = datetime.combine(selected_date - timedelta(days=1), dt_time(18, 0))
+end_time = datetime.combine(selected_date, dt_time(18, 0))
 
 if all_sleep_data:
     df = pd.DataFrame.from_dict(all_sleep_data, orient='index')
     df['time'] = pd.to_datetime(df['time'])
-    
-    # กำหนดรอบการนอน: 18:00 ของเมื่อวาน ถึง 12:00 ของวันที่เลือก
-    start_time = datetime.combine(selected_date - timedelta(days=1), dt_time(18, 0))
-    end_time = datetime.combine(selected_date, dt_time(18, 0))
-
+    # กรองเอาเฉพาะข้อมูลในรอบเวลาที่กำหนด
     df_night = df[(df['time'] >= start_time) & (df['time'] <= end_time)]
-    
+
+# ==========================================
+# 5. การแสดงผลตามหน้าที่เลือก (Routing)
+# ==========================================
+
+# ------------------------------------------
+# หน้าที่ 1: หน้าหลัก (Dashboard)
+# ------------------------------------------
+if page == "🏠 หน้าหลัก (Dashboard)":
+    st.title("💤 AI รายงานสุขภาพการนอนหลับ")
+    st.markdown("ระบบมอนิเตอร์สถานะ Real-time และสรุปสถิติการนอนหลับประจำวัน")
+    st.divider()
+
+    st.subheader("🔴 สถานะ ณ เวลานี้")
+    col_t, col_h, col_pose, col_snore = st.columns(4)
+    col_t.metric("อุณหภูมิห้อง", f"{temp} °C")
+    col_h.metric("ความชื้น", f"{hum} %")
+
+    if all_sleep_data:
+        latest_key = list(all_sleep_data.keys())[-1]
+        latest_data = all_sleep_data[latest_key]
+        col_pose.metric("ท่านอนปัจจุบัน", latest_data.get("pose", "-"))
+        
+        snore_status = latest_data.get("snore", "-")
+        if snore_status == "SNORING":
+            col_snore.metric("เสียงรบกวน", "🔴 กำลังกรน!")
+        else:
+            col_snore.metric("เสียงรบกวน", "🟢 เงียบปกติ")
+    else:
+        st.info("ยังไม่มีข้อมูลแบบ Real-time")
+
+    st.divider()
+    st.subheader("📊 สรุปผลการนอนหลับเบื้องต้น")
+
     if not df_night.empty:
         total_logs = len(df_night)
-        
         snore_df = df_night[df_night['snore'] == "SNORING"].copy()
         snore_count = len(snore_df)
-        
         snore_percent = (snore_count / total_logs) * 100 if total_logs > 0 else 0
         
         if snore_count > 0:
@@ -125,7 +128,7 @@ if all_sleep_data:
         else:
             peak_time_str = "ไม่มีการกรน (หลับสบาย)"
             
-        st.write(f"ข้อมูลการนอนตั้งแต่ **{start_time.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time.strftime('%d/%m/%Y %H:%M')}**")
+        st.write(f"ข้อมูลตั้งแต่ **{start_time.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time.strftime('%d/%m/%Y %H:%M')}**")
         col1, col2, col3 = st.columns(3)
         col1.metric("จำนวนครั้งที่ตรวจพบเสียงกรน", f"{snore_count} ครั้ง")
         col2.metric("คิดเป็นสัดส่วน (ของเวลานอน)", f"{snore_percent:.1f} %")
@@ -134,8 +137,6 @@ if all_sleep_data:
         report_msg = f"\n☀️ สรุปผลการนอนหลับเช้านี้ ({selected_date.strftime('%d/%m/%Y')}) 💤\n\n🛌 จำนวนครั้งที่กรน: {snore_count} ครั้ง\n📊 สัดส่วนการกรน: {snore_percent:.1f}%\n⏰ ช่วงที่กรนบ่อยสุด: {peak_time_str}\n🌡️ อุณหภูมิห้อง: {temp}°C\n\nอย่าลืมดื่มน้ำเยอะๆ นะครับ!"
         
         st.write("") 
-        
-        # 🌟 ปุ่มบังคับส่ง (Manual Force Send)
         if st.button("🚀 บังคับส่งรายงานนี้เข้า LINE ทันที", type="primary"):
             status = send_line_message(report_msg)
             if status == 200:
@@ -143,27 +144,67 @@ if all_sleep_data:
             else:
                 st.error("ส่ง LINE ไม่สำเร็จ")
                 
-        # ---------------------------------
-        # 🌟 ระบบเช็คเวลาส่ง LINE อัตโนมัติ (ฉบับแก้บั๊กแล้ว แม่นยำ 100%)
-        # ---------------------------------
-        # สร้างเวลาเป้าหมายของวันนี้ (เอาวันที่ปัจจุบัน + เวลาที่ตั้งไว้ใน Sidebar)
+        # ระบบส่ง LINE อัตโนมัติ
         target_alert_datetime = datetime.combine(current_date, alert_time)
-        
-        # ลอจิกใหม่: ถ้าเวลาปัจจุบัน "เลยหรือเท่ากับ" เวลาที่ตั้งไว้ และ "วันนี้ยังไม่ได้ส่ง"
         if thai_time >= target_alert_datetime:
             if st.session_state.last_sent_date != current_date:
                 status = send_line_message(report_msg)
                 if status == 200:
-                    st.session_state.last_sent_date = current_date # เมมไว้ว่าวันนี้ส่งไปแล้ว
+                    st.session_state.last_sent_date = current_date
                     st.toast(f"ส่งรายงานอัตโนมัติตามนัดตอน {alert_time.strftime('%H:%M')} สำเร็จ!", icon="✅")
-                    
     else:
         st.info("ไม่มีข้อมูลการนอนหลับในคืนวันที่คุณเลือก")
 
+# ------------------------------------------
+# หน้าที่ 2: กราฟสถิติ (Statistics)
+# ------------------------------------------
+elif page == "📈 กราฟสถิติ (Statistics)":
+    st.title("📈 กราฟวิเคราะห์พฤติกรรมการนอนหลับ")
+    st.markdown(f"ข้อมูลตั้งแต่ **{start_time.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time.strftime('%d/%m/%Y %H:%M')}**")
+    st.divider()
+
+    if not df_night.empty:
+        col_chart1, col_chart2 = st.columns(2)
+        
+        # กราฟที่ 1: ความถี่ของการกรนรายชั่วโมง
+        with col_chart1:
+            st.subheader("🗣️ ความถี่ของการกรน (รายชั่วโมง)")
+            snore_df = df_night[df_night['snore'] == "SNORING"].copy()
+            if not snore_df.empty:
+                # จัดกลุ่มข้อมูลตามชั่วโมง
+                snore_df['hour_str'] = snore_df['time'].dt.strftime('%H:00')
+                snore_by_hour = snore_df['hour_str'].value_counts().sort_index()
+                st.bar_chart(snore_by_hour, color="#FF4B4B") # กราฟแท่งสีแดง
+            else:
+                st.success("ไม่พบการกรนในช่วงเวลานี้ เยี่ยมมากครับ!")
+
+        # กราฟที่ 2: สัดส่วนท่านอน
+        with col_chart2:
+            st.subheader("🛌 สัดส่วนท่านอน (จำนวนครั้งที่ตรวจจับได้)")
+            # นับจำนวนแต่ละท่านอน
+            pose_counts = df_night['pose'].value_counts()
+            # กรองค่า "WAITING" ออก (ถ้ามี) จะได้ดูกราฟสวยๆ
+            if "WAITING" in pose_counts:
+                pose_counts = pose_counts.drop("WAITING")
+                
+            if not pose_counts.empty:
+                st.bar_chart(pose_counts, color="#1f77b4") # กราฟแท่งสีน้ำเงิน
+            else:
+                st.info("ไม่มีข้อมูลท่านอนที่สมบูรณ์")
+                
+        # แสดงตารางข้อมูลดิบด้านล่างเผื่อต้องการดูรายละเอียด
+        st.divider()
+        st.subheader("📋 ตารางข้อมูลบันทึกทั้งหมด (Log)")
+        st.dataframe(
+            df_night[['time', 'snore', 'prob', 'pose']].sort_values(by='time', ascending=False),
+            use_container_width=True
+        )
+    else:
+        st.warning("⚠️ ไม่มีข้อมูลสำหรับการสร้างกราฟในวันและเวลาที่คุณเลือกครับ")
+
 # ==========================================
-# 7. ระบบหน่วงเวลาเพื่อ Refresh หน้าเว็บอัตโนมัติ (แก้เป็น 10 วินาที)
+# 6. ระบบหน่วงเวลาเพื่อ Refresh หน้าเว็บอัตโนมัติ
 # ==========================================
 if auto_refresh:
-    time.sleep(10) # 🌟 รอ 10 วินาที
-    st.rerun()     # สั่งให้เว็บโหลดตัวเองใหม่
-
+    time.sleep(10)
+    st.rerun()
