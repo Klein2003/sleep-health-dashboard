@@ -47,7 +47,6 @@ current_date = thai_time.date()
 # เมนูด้านข้าง (Sidebar)
 # ==========================================
 st.sidebar.title("📌 เมนูนำทาง")
-# 🌟 สร้างปุ่มเลือกหน้า
 page = st.sidebar.radio("เลือกหน้าต่างแสดงผล:", ["🏠 หน้าหลัก (Dashboard)", "📈 กราฟสถิติ (Statistics)"])
 
 st.sidebar.divider()
@@ -58,8 +57,10 @@ st.sidebar.divider()
 st.sidebar.subheader("⏰ ตั้งเวลาส่งรายงาน (LINE)")
 alert_time = st.sidebar.time_input("เลือกเวลาส่งสรุปผล", value=dt_time(8, 0))
 
+selected_date = st.sidebar.date_input("📅 เลือกวันที่อ้างอิง", value=current_date)
+
 # ==========================================
-# 4. ดึงข้อมูลและจัดการข้อมูล (ทำครั้งเดียวใช้ได้ทุกหน้า)
+# 4. ดึงข้อมูลและจัดการข้อมูล 
 # ==========================================
 ref_sensor = db.reference('sensor_data')
 sensor_data = ref_sensor.get()
@@ -69,25 +70,18 @@ hum = sensor_data.get('humidity', '-') if sensor_data else '-'
 ref_sleep = db.reference('sleep_data')
 all_sleep_data = ref_sleep.get()
 
-# ให้ผู้ใช้เลือกวันที่ต้องการดูสถิติ (ย้ายมาไว้ข้างนอกเพื่อให้มีผลกับทั้ง 2 หน้า)
-selected_date = st.sidebar.date_input("📅 เลือกวันที่ดึงข้อมูล", value=current_date)
-
-df_night = pd.DataFrame() # สร้างตัวแปรว่างไว้ก่อน
-start_time = datetime.combine(selected_date - timedelta(days=1), dt_time(18, 0))
-end_time = datetime.combine(selected_date, dt_time(18, 0))
-
+# แปลงข้อมูลทั้งหมดเป็น DataFrame เตรียมไว้
+df_all = pd.DataFrame()
 if all_sleep_data:
-    df = pd.DataFrame.from_dict(all_sleep_data, orient='index')
-    df['time'] = pd.to_datetime(df['time'])
-    # กรองเอาเฉพาะข้อมูลในรอบเวลาที่กำหนด
-    df_night = df[(df['time'] >= start_time) & (df['time'] <= end_time)]
+    df_all = pd.DataFrame.from_dict(all_sleep_data, orient='index')
+    df_all['time'] = pd.to_datetime(df_all['time'])
 
 # ==========================================
 # 5. การแสดงผลตามหน้าที่เลือก (Routing)
 # ==========================================
 
 # ------------------------------------------
-# หน้าที่ 1: หน้าหลัก (Dashboard)
+# หน้าที่ 1: หน้าหลัก (Dashboard) - ข้อมูลรายวันเสมอ
 # ------------------------------------------
 if page == "🏠 หน้าหลัก (Dashboard)":
     st.title("💤 AI รายงานสุขภาพการนอนหลับ")
@@ -115,6 +109,14 @@ if page == "🏠 หน้าหลัก (Dashboard)":
     st.divider()
     st.subheader("📊 สรุปผลการนอนหลับเบื้องต้น")
 
+    # สำหรับหน้าหลัก จะบังคับดูแค่ 1 คืนเสมอ (18:00 เมื่อวาน ถึง 18:00 วันนี้)
+    start_time_daily = datetime.combine(selected_date - timedelta(days=1), dt_time(18, 0))
+    end_time_daily = datetime.combine(selected_date, dt_time(18, 0))
+    
+    df_night = pd.DataFrame()
+    if not df_all.empty:
+        df_night = df_all[(df_all['time'] >= start_time_daily) & (df_all['time'] <= end_time_daily)]
+
     if not df_night.empty:
         total_logs = len(df_night)
         snore_df = df_night[df_night['snore'] == "SNORING"].copy()
@@ -128,7 +130,7 @@ if page == "🏠 หน้าหลัก (Dashboard)":
         else:
             peak_time_str = "ไม่มีการกรน (หลับสบาย)"
             
-        st.write(f"ข้อมูลตั้งแต่ **{start_time.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time.strftime('%d/%m/%Y %H:%M')}**")
+        st.write(f"ข้อมูลตั้งแต่ **{start_time_daily.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time_daily.strftime('%d/%m/%Y %H:%M')}**")
         col1, col2, col3 = st.columns(3)
         col1.metric("จำนวนครั้งที่ตรวจพบเสียงกรน", f"{snore_count} ครั้ง")
         col2.metric("คิดเป็นสัดส่วน (ของเวลานอน)", f"{snore_percent:.1f} %")
@@ -144,7 +146,6 @@ if page == "🏠 หน้าหลัก (Dashboard)":
             else:
                 st.error("ส่ง LINE ไม่สำเร็จ")
                 
-        # ระบบส่ง LINE อัตโนมัติ
         target_alert_datetime = datetime.combine(current_date, alert_time)
         if thai_time >= target_alert_datetime:
             if st.session_state.last_sent_date != current_date:
@@ -156,51 +157,78 @@ if page == "🏠 หน้าหลัก (Dashboard)":
         st.info("ไม่มีข้อมูลการนอนหลับในคืนวันที่คุณเลือก")
 
 # ------------------------------------------
-# หน้าที่ 2: กราฟสถิติ (Statistics)
+# หน้าที่ 2: กราฟสถิติ (Statistics) - แบบเลือกช่วงเวลาได้
 # ------------------------------------------
 elif page == "📈 กราฟสถิติ (Statistics)":
     st.title("📈 กราฟวิเคราะห์พฤติกรรมการนอนหลับ")
-    st.markdown(f"ข้อมูลตั้งแต่ **{start_time.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time.strftime('%d/%m/%Y %H:%M')}**")
+    
+    # 🌟 เมนูเลือกช่วงเวลาสถิติ
+    time_range = st.selectbox("📅 เลือกช่วงเวลาการดูสถิติ:", 
+                              ["รายวัน (1 คืน)", "รายสัปดาห์ (7 วันย้อนหลัง)", "รายเดือน (30 วันย้อนหลัง)", "รายปี (365 วันย้อนหลัง)"])
+    
+    # คำนวณวันย้อนหลังตามตัวเลือก
+    if time_range == "รายวัน (1 คืน)":
+        days_back = 1
+    elif time_range == "รายสัปดาห์ (7 วันย้อนหลัง)":
+        days_back = 7
+    elif time_range == "รายเดือน (30 วันย้อนหลัง)":
+        days_back = 30
+    else:
+        days_back = 365
+        
+    start_time_stats = datetime.combine(selected_date - timedelta(days=days_back), dt_time(18, 0))
+    end_time_stats = datetime.combine(selected_date, dt_time(18, 0))
+
+    st.markdown(f"ข้อมูลตั้งแต่ **{start_time_stats.strftime('%d/%m/%Y')}** ถึง **{end_time_stats.strftime('%d/%m/%Y')}**")
     st.divider()
 
-    if not df_night.empty:
+    df_stats = pd.DataFrame()
+    if not df_all.empty:
+        df_stats = df_all[(df_all['time'] >= start_time_stats) & (df_all['time'] <= end_time_stats)]
+
+    if not df_stats.empty:
         col_chart1, col_chart2 = st.columns(2)
         
-        # กราฟที่ 1: ความถี่ของการกรนรายชั่วโมง
+        # กราฟที่ 1: ความถี่ของการกรน (ปรับตามช่วงเวลาที่เลือก)
         with col_chart1:
-            st.subheader("🗣️ ความถี่ของการกรน (รายชั่วโมง)")
-            snore_df = df_night[df_night['snore'] == "SNORING"].copy()
+            st.subheader("🗣️ ความถี่ของการกรน")
+            snore_df = df_stats[df_stats['snore'] == "SNORING"].copy()
             if not snore_df.empty:
-                # จัดกลุ่มข้อมูลตามชั่วโมง
-                snore_df['hour_str'] = snore_df['time'].dt.strftime('%H:00')
-                snore_by_hour = snore_df['hour_str'].value_counts().sort_index()
-                st.bar_chart(snore_by_hour, color="#FF4B4B") # กราฟแท่งสีแดง
+                # ถ้าดูรายวัน ให้กรุ๊ปข้อมูลเป็นรายชั่วโมง / ถ้าดูมากกว่านั้น ให้กรุ๊ปเป็นรายวัน
+                if time_range == "รายวัน (1 คืน)":
+                    snore_df['group'] = snore_df['time'].dt.strftime('%H:00')
+                    st.caption("แสดงสถิติเป็นรายชั่วโมง")
+                else:
+                    snore_df['group'] = snore_df['time'].dt.strftime('%d/%m/%Y')
+                    st.caption("แสดงสถิติรวมในแต่ละวัน")
+                    
+                snore_by_group = snore_df['group'].value_counts().sort_index()
+                st.bar_chart(snore_by_group, color="#FF4B4B")
             else:
                 st.success("ไม่พบการกรนในช่วงเวลานี้ เยี่ยมมากครับ!")
 
-        # กราฟที่ 2: สัดส่วนท่านอน
+        # กราฟที่ 2: สัดส่วนท่านอนรวม
         with col_chart2:
-            st.subheader("🛌 สัดส่วนท่านอน (จำนวนครั้งที่ตรวจจับได้)")
-            # นับจำนวนแต่ละท่านอน
-            pose_counts = df_night['pose'].value_counts()
-            # กรองค่า "WAITING" ออก (ถ้ามี) จะได้ดูกราฟสวยๆ
+            st.subheader("🛌 สัดส่วนท่านอน (รวมทั้งหมด)")
+            st.caption("จำนวนครั้งที่ตรวจจับได้ในช่วงเวลานี้")
+            pose_counts = df_stats['pose'].value_counts()
             if "WAITING" in pose_counts:
                 pose_counts = pose_counts.drop("WAITING")
                 
             if not pose_counts.empty:
-                st.bar_chart(pose_counts, color="#1f77b4") # กราฟแท่งสีน้ำเงิน
+                st.bar_chart(pose_counts, color="#1f77b4")
             else:
                 st.info("ไม่มีข้อมูลท่านอนที่สมบูรณ์")
                 
-        # แสดงตารางข้อมูลดิบด้านล่างเผื่อต้องการดูรายละเอียด
+        # แสดงตารางข้อมูลดิบ
         st.divider()
         st.subheader("📋 ตารางข้อมูลบันทึกทั้งหมด (Log)")
         st.dataframe(
-            df_night[['time', 'snore', 'prob', 'pose']].sort_values(by='time', ascending=False),
+            df_stats[['time', 'snore', 'prob', 'pose']].sort_values(by='time', ascending=False),
             use_container_width=True
         )
     else:
-        st.warning("⚠️ ไม่มีข้อมูลสำหรับการสร้างกราฟในวันและเวลาที่คุณเลือกครับ")
+        st.warning("⚠️ ไม่มีข้อมูลสำหรับการสร้างกราฟในช่วงเวลาที่คุณเลือกครับ")
 
 # ==========================================
 # 6. ระบบหน่วงเวลาเพื่อ Refresh หน้าเว็บอัตโนมัติ
