@@ -3,6 +3,9 @@ import requests
 import json
 import firebase_admin
 from firebase_admin import credentials, db
+import pandas as pd
+from datetime import datetime, timedelta
+import time
 
 # ==========================================
 # 1. ตั้งค่า LINE Messaging API
@@ -15,101 +18,123 @@ def send_line_message(message):
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {access_token}'
     }
-    data = {
-        "to": user_id,
-        "messages": [{"type": "text", "text": message}]
-    }
+    data = {"to": user_id, "messages": [{"type": "text", "text": message}]}
     response = requests.post(url, headers=headers, data=json.dumps(data))
     return response.status_code
 
 # ==========================================
-# 2. ตั้งค่าเชื่อมต่อ Firebase (รันบน Streamlit Cloud)
+# 2. ตั้งค่าเชื่อมต่อ Firebase
 # ==========================================
 if not firebase_admin._apps:
-    # 🌟 ดึงกุญแจจาก "ตู้เซฟ (Secrets)" ของ Streamlit 
     firebase_credentials = dict(st.secrets["firebase"])
     cred = credentials.Certificate(firebase_credentials)
-    
     firebase_admin.initialize_app(cred, {
         'databaseURL': 'https://sleep-health-monitor-default-rtdb.asia-southeast1.firebasedatabase.app/'
     })
 
 # ==========================================
-# 3. หน้าตาเว็บ Dashboard (Streamlit)
+# 3. การตั้งค่าหน้าเว็บ
 # ==========================================
-st.set_page_config(page_title="Sleep Health Dashboard", page_icon="💤", layout="centered")
+st.set_page_config(page_title="Sleep Health Dashboard", page_icon="💤", layout="wide")
 
-st.title("💤 AI ตรวจจับสุขภาพการนอน")
-st.markdown("มอนิเตอร์สภาพแวดล้อมและพฤติกรรมการนอนหลับแบบ Real-time")
+# เมนูด้านข้าง (Sidebar) สำหรับเปิด-ปิดการอัปเดตอัตโนมัติ
+st.sidebar.title("⚙️ ตั้งค่าระบบ")
+auto_refresh = st.sidebar.toggle("🔄 อัปเดตอัตโนมัติ (ทุก 1 นาที)", value=True)
+
+st.title("💤 AI รายงานสุขภาพการนอนหลับ")
+st.markdown("ระบบมอนิเตอร์สถานะ Real-time และสรุปสถิติการนอนหลับประจำวัน")
+st.divider()
+
+# ==========================================
+# 4. ดึงข้อมูลจาก Firebase
+# ==========================================
+ref_sensor = db.reference('sensor_data')
+sensor_data = ref_sensor.get()
+temp = sensor_data.get('temperature', '-') if sensor_data else '-'
+hum = sensor_data.get('humidity', '-') if sensor_data else '-'
+
+ref_sleep = db.reference('sleep_data')
+all_sleep_data = ref_sleep.get()
+
+# ==========================================
+# 5. ส่วนแสดงผล Real-time (สถานะปัจจุบัน)
+# ==========================================
+st.subheader("🔴 สถานะ ณ เวลานี้")
+col_t, col_h, col_pose, col_snore = st.columns(4)
+col_t.metric("อุณหภูมิห้อง", f"{temp} °C")
+col_h.metric("ความชื้น", f"{hum} %")
+
+if all_sleep_data:
+    latest_key = list(all_sleep_data.keys())[-1]
+    latest_data = all_sleep_data[latest_key]
+    
+    col_pose.metric("ท่านอนปัจจุบัน", latest_data.get("pose", "-"))
+    
+    snore_status = latest_data.get("snore", "-")
+    if snore_status == "SNORING":
+        col_snore.metric("เสียงรบกวน", "🔴 กำลังกรน!")
+    else:
+        col_snore.metric("เสียงรบกวน", "🟢 เงียบปกติ")
+else:
+    st.info("ยังไม่มีข้อมูลแบบ Real-time")
 
 st.divider()
 
-# ปุ่มสำหรับกดดึงข้อมูลล่าสุดจาก Firebase
-if st.button("🔄 อัปเดตข้อมูลล่าสุด", type="primary", use_container_width=True):
-    
-    # ---------------------------------
-    # ดึงข้อมูลอุณหภูมิ/ความชื้น
-    # ---------------------------------
-    ref_sensor = db.reference('sensor_data')
-    sensor_data = ref_sensor.get()
-    
-    temp = sensor_data.get('temperature', '-') if sensor_data else '-'
-    hum = sensor_data.get('humidity', '-') if sensor_data else '-'
+# ==========================================
+# 6. ส่วนวิเคราะห์และสรุปผลประจำวัน (Morning Summary)
+# ==========================================
+st.subheader("📊 สรุปผลการนอนหลับ (วิเคราะห์จาก 12 ชั่วโมงที่ผ่านมา)")
 
-    st.subheader("🌡️ สภาพแวดล้อมห้องนอน")
-    col_t, col_h = st.columns(2)
-    col_t.metric("อุณหภูมิ", f"{temp} °C")
-    col_h.metric("ความชื้นสัมพัทธ์", f"{hum} %")
+if all_sleep_data:
+    # แปลงข้อมูลจาก Firebase ให้อยู่ในรูปแบบตาราง (DataFrame) เพื่อคำนวณง่ายๆ
+    df = pd.DataFrame.from_dict(all_sleep_data, orient='index')
+    df['time'] = pd.to_datetime(df['time'])
     
-    st.divider()
-
-    # ---------------------------------
-    # ดึงข้อมูลการนอน
-    # ---------------------------------
-    ref_sleep = db.reference('sleep_data')
-    all_sleep_data = ref_sleep.get()
+    # กรองเอาเฉพาะข้อมูล "เมื่อคืน" (ย้อนหลัง 12 ชั่วโมง)
+    now = datetime.now()
+    last_12h = now - timedelta(hours=12)
+    df_night = df[df['time'] >= last_12h]
     
-    if all_sleep_data:
-        # ดึงข้อมูลก้อนล่าสุด (ตัวสุดท้ายใน Dictionary)
-        latest_key = list(all_sleep_data.keys())[-1]
-        latest_data = all_sleep_data[latest_key]
+    if not df_night.empty:
+        total_logs = len(df_night)
         
-        # ดึงค่าต่างๆ ออกมา
-        db_time = latest_data.get("time", "-")[:19] # ตัดเศษวินาทีออก
-        db_pose = latest_data.get("pose", "-")
-        db_snore = latest_data.get("snore", "-")
-        db_prob = latest_data.get("prob", 0.0)
+        # แยกเฉพาะข้อมูลตอนที่ "กรน"
+        snore_df = df_night[df_night['snore'] == "SNORING"].copy()
+        snore_count = len(snore_df)
         
-        st.subheader("🛌 สถานะการนอนหลับล่าสุด")
+        # คำนวณเปอร์เซ็นต์
+        snore_percent = (snore_count / total_logs) * 100 if total_logs > 0 else 0
         
-        col1, col2, col3 = st.columns(3)
-        col1.metric("เวลาบันทึก", db_time)
-        col2.metric("ท่านอน", db_pose)
-        
-        # ตกแต่งสีให้สถานะการกรน
-        if db_snore == "SNORING":
-            col3.metric("เสียงกรน", "🔴 ตรวจพบ!")
-        elif db_snore == "NORMAL":
-            col3.metric("เสียงกรน", "🟢 ปกติ")
+        # หาช่วงเวลาที่กรนหนักที่สุด (Peak Hour)
+        if snore_count > 0:
+            snore_df['hour'] = snore_df['time'].dt.hour
+            peak_hour = int(snore_df['hour'].mode()[0]) # หาชั่วโมงที่โผล่มาบ่อยสุด
+            peak_time_str = f"{peak_hour:02d}:00 - {peak_hour+1:02d}:00 น."
         else:
-            col3.metric("เสียงกรน", "⏳ รอวิเคราะห์")
-
-        # แถบแสดงความน่าจะเป็นในการกรน
-        st.progress(min(db_prob, 1.0), text=f"ความน่าจะเป็นที่กำลังกรน: {db_prob*100:.1f}%")
+            peak_time_str = "ไม่มีการกรนเลย (หลับสบายมาก)"
+            
+        # โชว์หน้าแดชบอร์ด
+        col1, col2, col3 = st.columns(3)
+        col1.metric("จำนวนครั้งที่ตรวจพบเสียงกรน", f"{snore_count} ครั้ง")
+        col2.metric("คิดเป็นสัดส่วน (ของเวลานอน)", f"{snore_percent:.1f} %")
+        col3.metric("ช่วงเวลาที่กรนบ่อยที่สุด", peak_time_str)
         
-        # ---------------------------------
-        # ระบบส่ง LINE แจ้งเตือน
-        # ---------------------------------
-        if db_snore == "SNORING":
-            st.error("⚠️ ผู้ใช้งานกำลังกรนเสียงดัง ระบบกำลังแจ้งเตือนไปยัง LINE!")
-            
-            # จัดฟอร์แมตข้อความส่ง LINE
-            msg = f"\n⚠️ แจ้งเตือนจากระบบ!\n🛌 ท่านอน: {db_pose}\n🗣️ สถานะ: มีอาการกรน ({db_prob*100:.1f}%)\n🌡️ อุณหภูมิห้อง: {temp}°C"
-            
-            line_status = send_line_message(msg)
-            if line_status == 200:
-                st.toast("ส่งแจ้งเตือนเข้า LINE สำเร็จ!", icon="✅")
+        st.write("") # เว้นบรรทัด
+        
+        # ปุ่มสำหรับกดส่งรายงานเข้า LINE ตอนเช้า
+        if st.button("📲 ส่งสรุปผลเมื่อคืนเข้า LINE", type="primary"):
+            msg = f"\n☀️ สรุปผลการนอนหลับเมื่อคืน 💤\n\n🛌 จำนวนครั้งที่กรน: {snore_count} ครั้ง\n📊 คิดเป็น: {snore_percent:.1f}% ของเวลาทั้งหมด\n⏰ ช่วงที่กรนบ่อยสุด: {peak_time_str}\n🌡️ อุณหภูมิห้อง: {temp}°C\n\nดูแลสุขภาพและดื่มน้ำเยอะๆ นะครับ!"
+            status = send_line_message(msg)
+            if status == 200:
+                st.success("ส่งรายงานสรุปผลเข้า LINE สำเร็จ!")
             else:
-                st.toast("ส่ง LINE ไม่สำเร็จ", icon="❌")
+                st.error("ส่ง LINE ไม่สำเร็จ")
     else:
-        st.info("ยังไม่มีข้อมูลการนอนในระบบ")
+        st.info("ไม่มีข้อมูลการนอนหลับในช่วง 12 ชั่วโมงที่ผ่านมา")
+
+# ==========================================
+# 7. ระบบหน่วงเวลาเพื่อ Refresh หน้าเว็บอัตโนมัติ
+# ==========================================
+if auto_refresh:
+    time.sleep(60) # รอ 1 นาที
+    st.rerun()     # สั่งให้เว็บโหลดตัวเองใหม่
