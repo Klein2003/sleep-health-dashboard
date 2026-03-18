@@ -106,8 +106,8 @@ if all_sleep_data:
     
     # กำหนดรอบการนอน: 18:00 ของเมื่อวาน ถึง 12:00 ของวันที่เลือก
     start_time = datetime.combine(selected_date - timedelta(days=1), dt_time(18, 0))
-    end_time = datetime.combine(selected_date, dt_time(12, 0))
-    
+    end_time = datetime.combine(selected_date, dt_time(18, 0))
+
     df_night = df[(df['time'] >= start_time) & (df['time'] <= end_time)]
     
     if not df_night.empty:
@@ -166,3 +166,4 @@ if all_sleep_data:
 if auto_refresh:
     time.sleep(10) # 🌟 รอ 10 วินาที
     st.rerun()     # สั่งให้เว็บโหลดตัวเองใหม่
+
