@@ -174,13 +174,8 @@ if page == "🏠 หน้าหลัก (Dashboard)":
 elif page == "📈 กราฟสถิติ (Statistics)":
     st.title("📈 ไทม์ไลน์พฤติกรรมการนอนหลับ (Time-Series)")
     
-    time_range = st.selectbox("📅 เลือกช่วงเวลาการดูสถิติ:", 
-                              ["รายวัน (1 คืน)", "รายสัปดาห์ (7 วันย้อนหลัง)", "รายเดือน (30 วันย้อนหลัง)", "รายปี (365 วันย้อนหลัง)"])
-    
-    if time_range == "รายวัน (1 คืน)": days_back = 1
-    elif time_range == "รายสัปดาห์ (7 วันย้อนหลัง)": days_back = 7
-    elif time_range == "รายเดือน (30 วันย้อนหลัง)": days_back = 30
-    else: days_back = 365
+
+
         
     start_time_stats = datetime.combine(selected_date - timedelta(days=days_back), dt_time(18, 0))
     end_time_stats = datetime.combine(selected_date, dt_time(18, 0))
