@@ -4,6 +4,7 @@ import json
 import firebase_admin
 from firebase_admin import credentials, db
 import pandas as pd
+import numpy as np  # 🌟 เพิ่ม NumPy เข้ามาเพื่อใช้ค่าว่าง (NaN)
 from datetime import datetime, timedelta, time as dt_time
 import time
 
@@ -179,40 +180,46 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_stats = df_all[(df_all['time'] >= start_time_stats) & (df_all['time'] <= end_time_stats)].copy()
 
     if not df_stats.empty:
-        # ตั้งค่าให้แกน X เป็นเวลา
-        df_stats.set_index('time', inplace=True)
-        
-        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
-        st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
-        st.line_chart(df_stats[['prob']], color="#FF4B4B")
-        
-        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
-        st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
+        # เตรียมตัวเลขสำหรับท่านอน (ก่อนดึงไปวาดกราฟ)
         def pose_to_num(p):
             if p == "Face up/down": return 1.0
             elif p == "Side": return 2.0
             else: return None
-            
         df_stats['pose_num'] = df_stats['pose'].apply(pose_to_num)
-        pose_chart_df = df_stats.dropna(subset=['pose_num'])
+
+        # 🌟 สร้าง DataFrame สำเนาสำหรับ "กราฟ" โดยเฉพาะ
+        df_chart = df_stats.copy()
+        df_chart.set_index('time', inplace=True)
+
+        # 📌📌 เทคนิค "ปักหมุด" (Data Padding): บังคับให้แกน X ล็อคความกว้างตามเวลาที่ตั้งไว้ 📌📌
+        df_chart.loc[start_time_stats] = np.nan
+        df_chart.loc[end_time_stats] = np.nan
+        df_chart.sort_index(inplace=True)
+
+        # กราฟชั้นที่ 1: ความถี่และความหนักของการกรน
+        st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
+        st.line_chart(df_chart[['prob']], color="#FF4B4B")
         
-        if not pose_chart_df.empty:
-            st.line_chart(pose_chart_df[['pose_num']], color="#1f77b4")
-            st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
+        # กราฟชั้นที่ 2: การพลิกตัว/ท่านอน
+        st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
+        # วาดเฉพาะข้อมูลที่สามารถแปลงเป็นตัวเลขได้
+        st.line_chart(df_chart[['pose_num']], color="#1f77b4")
+        st.caption("💡 แกน Y: 1.0 = นอนหงาย/คว่ำ (Face up/down)  |  2.0 = นอนตะแคง (Side)")
         
         # กราฟชั้นที่ 3: อุณหภูมิและความชื้น
         st.subheader("🌡️ สภาพแวดล้อมห้องนอน (อุณหภูมิ & ความชื้น)")
-        if 'temp' in df_stats.columns and 'hum' in df_stats.columns:
-            st.line_chart(df_stats[['temp', 'hum']])
+        if 'temp' in df_chart.columns and 'hum' in df_chart.columns:
+            st.line_chart(df_chart[['temp', 'hum']])
         else:
             st.info("⏳ ไม่พบประวัติอุณหภูมิและความชื้นในข้อมูลชุดเก่า (ระบบจะเริ่มแสดงเมื่อมีข้อมูลใหม่เข้ามา)")
 
-        # แสดงตารางข้อมูลดิบ
+        # แสดงตารางข้อมูลดิบ (ใช้ df_stats ตัวเดิม เพื่อไม่ให้ค่า NaN ที่เราสร้างขึ้นไปโผล่ในตาราง)
         st.divider()
         st.subheader("📋 ตารางข้อมูลบันทึกทั้งหมด (Log)")
         st.dataframe(
-            df_stats[['snore', 'prob', 'pose', 'temp', 'hum'] if 'temp' in df_stats.columns else ['snore', 'prob', 'pose']].sort_index(ascending=False),
-            use_container_width=True
+            df_stats[['time', 'snore', 'prob', 'pose', 'temp', 'hum'] if 'temp' in df_stats.columns else ['time', 'snore', 'prob', 'pose']].sort_values(by='time', ascending=False),
+            use_container_width=True,
+            hide_index=True
         )
     else:
         st.warning("⚠️ ไม่มีข้อมูลสำหรับการสร้างกราฟในช่วงเวลาที่คุณเลือกครับ")
