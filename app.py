@@ -65,7 +65,7 @@ if saved_time_str:
 else:
     default_alert_time = dt_time(8, 0)
 
-alert_time = st.sidebar.time_input("เลือกเวลาส่งสรุปผล", value=default_alert_time)
+alert_time = st.sidebar.time_input("เลือกเวลาส่งสรุปผล", value=default_alert_time, step=60)
 
 # 🌟 จุดที่แก้: ถ้ามีการตั้งเวลาใหม่ ให้ลบสถานะ "ส่งแล้ว" ทิ้งด้วย!
 if alert_time.strftime('%H:%M') != saved_time_str:
