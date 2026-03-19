@@ -127,7 +127,7 @@ def snore_detection_loop():
             snore_status = "SNORING" if snore_prob > 0.6 else "NORMAL"
             print(f"😴 เสียง: {snore_status} | {snore_prob:.3f}")
 
-        time.sleep(2)
+        time.sleep(5)
 
 # ==========================================
 # 7. Firebase Thread 
@@ -158,7 +158,7 @@ def firebase_loop():
         except Exception as e:
             print("❌ Firebase error:", e)
 
-        time.sleep(5)
+        time.sleep(30)
 
 # ==========================================
 # 8. กล้อง
