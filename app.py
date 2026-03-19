@@ -65,8 +65,21 @@ if saved_time_str:
 else:
     default_alert_time = dt_time(8, 0)
 
-alert_time = st.sidebar.time_input("เลือกเวลาส่งสรุปผล", value=default_alert_time, step=60)
+st.sidebar.markdown("**เลือกเวลาส่งสรุปผล:**")
+col_h, col_m = st.sidebar.columns(2)
 
+# กล่องเลือกชั่วโมง (00 - 23)
+with col_h:
+    hours_list = [f"{i:02d}" for i in range(24)]
+    selected_hour = st.selectbox("ชั่วโมง", hours_list, index=default_alert_time.hour)
+
+# กล่องเลือกนาที (00 - 59)
+with col_m:
+    minutes_list = [f"{i:02d}" for i in range(60)]
+    selected_minute = st.selectbox("นาที", minutes_list, index=default_alert_time.minute)
+
+# เอาชั่วโมงกับนาทีมาประกอบร่างกันเป็นเวลาที่ระบบเข้าใจ
+alert_time = dt_time(int(selected_hour), int(selected_minute))
 # 🌟 จุดที่แก้: ถ้ามีการตั้งเวลาใหม่ ให้ลบสถานะ "ส่งแล้ว" ทิ้งด้วย!
 if alert_time.strftime('%H:%M') != saved_time_str:
     alert_time_ref.set(alert_time.strftime('%H:%M'))
