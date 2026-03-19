@@ -43,6 +43,35 @@ thai_time = datetime.utcnow() + timedelta(hours=7)
 current_date = thai_time.date()
 
 # ==========================================
+# 4. ดึงข้อมูล และ ระบบ Auto-Cleanup (ดึงข้อมูลก่อนเพื่อนำไปโชว์ในปฏิทิน)
+# ==========================================
+ref_sensor = db.reference('sensor_data')
+sensor_data = ref_sensor.get()
+temp = sensor_data.get('temperature', '-') if sensor_data else '-'
+hum = sensor_data.get('humidity', '-') if sensor_data else '-'
+
+ref_sleep = db.reference('sleep_data')
+all_sleep_data = ref_sleep.get()
+
+df_all = pd.DataFrame()
+if all_sleep_data:
+    df_all = pd.DataFrame.from_dict(all_sleep_data, orient='index')
+    df_all['time'] = pd.to_datetime(df_all['time'])
+    
+    # 🌟 4.1 ระบบลบข้อมูลเก่าอัตโนมัติ (เก็บย้อนหลัง 7 วัน)
+    # คุณสามารถเปลี่ยนเลข 7 เป็นเลขอื่นได้ถ้าต้องการเก็บนานขึ้น
+    cutoff_date = thai_time - timedelta(days=7) 
+    old_data = df_all[df_all['time'] < cutoff_date]
+    
+    if not old_data.empty:
+        # ใช้คำสั่ง update เป็น None เพื่อลบข้อมูลหลายๆ ตัวพร้อมกันแบบรวดเร็ว (Batch Delete)
+        updates = {key: None for key in old_data.index}
+        db.reference('sleep_data').update(updates)
+        
+        # ตัดข้อมูลที่ถูกลบออกจากการแสดงผลของหน้าเว็บปัจจุบัน
+        df_all = df_all[df_all['time'] >= cutoff_date]
+
+# ==========================================
 # เมนูด้านข้าง (Sidebar)
 # ==========================================
 st.sidebar.title("📌 เมนูนำทาง")
@@ -82,23 +111,22 @@ if alert_time.strftime('%H:%M') != saved_time_str:
     db.reference('system_status/last_sent_date').delete() 
     st.sidebar.success("อัปเดตเวลาใหม่ และรีเซ็ตสถานะพร้อมส่งแล้ว! ⏰")
 
-selected_date = st.sidebar.date_input("📅 เลือกวันที่อ้างอิง", value=current_date)
+st.sidebar.divider()
+st.sidebar.subheader("📅 เลือกวันที่อ้างอิง")
+selected_date = st.sidebar.date_input("ดูสถิติการนอนของวันที่:", value=current_date)
 
-# ==========================================
-# 4. ดึงข้อมูลและจัดการข้อมูล 
-# ==========================================
-ref_sensor = db.reference('sensor_data')
-sensor_data = ref_sensor.get()
-temp = sensor_data.get('temperature', '-') if sensor_data else '-'
-hum = sensor_data.get('humidity', '-') if sensor_data else '-'
+# 🌟 4.2 ระบบบอกใบ้ว่าวันไหนมีข้อมูลบ้าง
+if not df_all.empty:
+    # คำนวณวันที่อ้างอิง (ถอยหลัง 18 ชั่วโมง แล้วบวก 1 วัน เพื่อให้ตรงกับกะการนอน)
+    df_all['ref_date'] = (df_all['time'] - pd.Timedelta(hours=18)).dt.date + pd.Timedelta(days=1)
+    avail_dates = sorted(df_all['ref_date'].unique())
+    # แปลงเป็นข้อความให้สวยงาม เช่น "18/03, 19/03"
+    avail_str = ", ".join([d.strftime("%d/%m") for d in avail_dates])
+    st.sidebar.success(f"✅ วันที่มีข้อมูล: {avail_str}")
+else:
+    st.sidebar.error("❌ ยังไม่มีข้อมูลในระบบ")
 
-ref_sleep = db.reference('sleep_data')
-all_sleep_data = ref_sleep.get()
-
-df_all = pd.DataFrame()
-if all_sleep_data:
-    df_all = pd.DataFrame.from_dict(all_sleep_data, orient='index')
-    df_all['time'] = pd.to_datetime(df_all['time'])
+st.sidebar.info("💡 **Auto-Cleanup:** ระบบจะทำการลบข้อมูลที่เก่ากว่า 7 วันอัตโนมัติ เพื่อป้องกันฐานข้อมูลเต็ม")
 
 # ==========================================
 # 5. การแสดงผลตามหน้าที่เลือก (Routing)
@@ -186,9 +214,7 @@ if page == "🏠 หน้าหลัก (Dashboard)":
 elif page == "📈 กราฟสถิติ (Statistics)":
     st.title("📈 ไทม์ไลน์พฤติกรรมการนอนหลับ (Time-Series)")
     
-    # 🌟 ลบ Dropdown เลือกช่วงเวลาออก และบังคับให้ดูเป็น "รายวัน" ตามวันที่อ้างอิงเสมอ
     days_back = 1
-        
     start_time_stats = datetime.combine(selected_date - timedelta(days=days_back), dt_time(18, 0))
     end_time_stats = datetime.combine(selected_date, dt_time(18, 0))
 
