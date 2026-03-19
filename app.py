@@ -39,7 +39,6 @@ if not firebase_admin._apps:
 # ==========================================
 st.set_page_config(page_title="Sleeping Dashboard", page_icon="💤", layout="wide")
 
-# จัดการ Timezone ให้เป็นเวลาประเทศไทย (UTC+7) เสมอ
 thai_time = datetime.utcnow() + timedelta(hours=7)
 current_date = thai_time.date()
 
@@ -68,25 +67,19 @@ else:
 st.sidebar.markdown("**เลือกเวลาส่งสรุปผล:**")
 col_h, col_m = st.sidebar.columns(2)
 
-# กล่องเลือกชั่วโมง (00 - 23)
 with col_h:
     hours_list = [f"{i:02d}" for i in range(24)]
     selected_hour = st.selectbox("ชั่วโมง", hours_list, index=default_alert_time.hour)
 
-# กล่องเลือกนาที (00 - 59)
 with col_m:
     minutes_list = [f"{i:02d}" for i in range(60)]
     selected_minute = st.selectbox("นาที", minutes_list, index=default_alert_time.minute)
 
-# เอาชั่วโมงกับนาทีมาประกอบร่างกันเป็นเวลาที่ระบบเข้าใจ
 alert_time = dt_time(int(selected_hour), int(selected_minute))
-# 🌟 จุดที่แก้: ถ้ามีการตั้งเวลาใหม่ ให้ลบสถานะ "ส่งแล้ว" ทิ้งด้วย!
+
 if alert_time.strftime('%H:%M') != saved_time_str:
     alert_time_ref.set(alert_time.strftime('%H:%M'))
-    
-    # สั่งลบความจำของวันนี้ใน Firebase ทิ้ง เพื่อให้มันส่งใหม่ในเวลาที่ตั้ง
     db.reference('system_status/last_sent_date').delete() 
-    
     st.sidebar.success("อัปเดตเวลาใหม่ และรีเซ็ตสถานะพร้อมส่งแล้ว! ⏰")
 
 selected_date = st.sidebar.date_input("📅 เลือกวันที่อ้างอิง", value=current_date)
@@ -204,14 +197,22 @@ elif page == "📈 กราฟสถิติ (Statistics)":
     start_time_stats = datetime.combine(selected_date - timedelta(days=days_back), dt_time(18, 0))
     end_time_stats = datetime.combine(selected_date, dt_time(18, 0))
 
-    st.markdown(f"ข้อมูลตั้งแต่ **{start_time_stats.strftime('%d/%m/%Y %H:%M')}** ถึง **{end_time_stats.strftime('%d/%m/%Y %H:%M')}**")
-    st.divider()
-
     df_stats = pd.DataFrame()
     if not df_all.empty:
         df_stats = df_all[(df_all['time'] >= start_time_stats) & (df_all['time'] <= end_time_stats)].copy()
 
     if not df_stats.empty:
+        # 🌟 คำนวณขอบเขตเวลาจริงๆ ที่มีข้อมูล (เพื่อทำ Auto-Zoom)
+        actual_start = df_stats['time'].min()
+        actual_end = df_stats['time'].max()
+        
+        # เพิ่มพื้นที่ว่างซ้ายขวาให้กราฟดูไม่อึดอัด (ข้างละ 5 นาที)
+        domain_start = actual_start - timedelta(minutes=5)
+        domain_end = actual_end + timedelta(minutes=5)
+        
+        st.info(f"🔍 ตรวจพบข้อมูลการนอนจริงในช่วงเวลา **{actual_start.strftime('%H:%M:%S')}** ถึง **{actual_end.strftime('%H:%M:%S')}**")
+        st.divider()
+
         def pose_to_num(p):
             if p == "Face up/down": return 1.0
             elif p == "Side": return 2.0
@@ -223,10 +224,8 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_chart.set_index('time', inplace=True)
         df_chart = df_chart[~df_chart.index.duplicated(keep='last')]
 
-        # 🌟 1. ปรับการเชื่อมเวลาให้เป็นทุกๆ 30 วินาที (30S) ตามที่ AI ส่งมา
+        # Resample เฉพาะช่วงที่มีข้อมูลจริง กราฟจะได้ไม่สร้างสะพานว่างเปล่ายาวๆ
         df_chart = df_chart.resample('30S').mean(numeric_only=True) 
-
-        # 🌟 2. ถ้ามีช่วงว่าง (AI ปิดเครื่อง) ให้ความน่าจะเป็นกรนตกไปที่ 0
         df_chart['prob'] = df_chart['prob'].fillna(0) 
         df_chart['pose_num'] = df_chart['pose_num'].ffill() 
         
@@ -234,51 +233,64 @@ elif page == "📈 กราฟสถิติ (Statistics)":
             df_chart['temp'] = df_chart['temp'].ffill() 
             df_chart['hum'] = df_chart['hum'].ffill()
 
-        # 🌟 3. ปรับเกลี่ยความสมูทให้ใช้แค่ 2 จุด (เท่ากับ 1 นาที) กราฟจะได้ไม่หน่วงเกินไป
         df_chart['prob_smooth'] = df_chart['prob'].rolling(window=2, min_periods=1).mean()
-
         df_chart.reset_index(inplace=True) 
 
-        # ฟังก์ชันวาดกราฟแบบลากเมาส์ดูได้ (Altair)
-        def create_custom_chart(data, y_col, y_title, color_hex):
-            chart = alt.Chart(data).mark_line(color=color_hex, point=False).encode(
-                x=alt.X('time:T', title='เวลา', 
-                        axis=alt.Axis(format='%H:%M'), 
-                        scale=alt.Scale(domain=[start_time_stats.isoformat(), end_time_stats.isoformat()])
-                       ),
-                y=alt.Y(f'{y_col}:Q', title=y_title),
-                tooltip=[
-                    alt.Tooltip('time:T', title='วันที่และเวลา', format='%d/%m/%Y %H:%M:%S'),
-                    alt.Tooltip(f'{y_col}:Q', title=y_title)
-                ]
-            ).interactive()
-            return chart
-
+        # -----------------------------------
+        # วาดกราฟด้วย Altair รูปแบบใหม่
+        # -----------------------------------
+        
+        # 1. กราฟกรน (Area Chart คลื่นสีแดง)
         st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
-        st.altair_chart(create_custom_chart(df_chart, 'prob_smooth', 'ความน่าจะเป็น (0-1)', '#FF4B4B'), use_container_width=True)
+        snore_chart = alt.Chart(df_chart).mark_area(
+            color='#FF4B4B', opacity=0.4, line={'color': '#FF4B4B', 'size': 2}
+        ).encode(
+            x=alt.X('time:T', title='เวลา', 
+                    axis=alt.Axis(format='%H:%M'), 
+                    scale=alt.Scale(domain=[domain_start.isoformat(), domain_end.isoformat()])), # 🌟 ใช้ Auto-Zoom Domain
+            y=alt.Y('prob_smooth:Q', title='ความน่าจะเป็น (0-1)'),
+            tooltip=[
+                alt.Tooltip('time:T', title='เวลา', format='%H:%M:%S'),
+                alt.Tooltip('prob_smooth:Q', title='โอกาสกรน', format='.2f')
+            ]
+        ).interactive()
+        st.altair_chart(snore_chart, use_container_width=True)
         
+        # 2. กราฟท่านอน (Step Chart ขั้นบันได)
         st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
-        st.altair_chart(create_custom_chart(df_chart, 'pose_num', '1.0=หงาย/คว่ำ, 2.0=ตะแคง', '#1f77b4'), use_container_width=True)
+        pose_chart = alt.Chart(df_chart).mark_line(
+            color='#1f77b4', size=3, interpolate='step-after' # 🌟 ใช้ interpolate แบบขั้นบันได
+        ).encode(
+            x=alt.X('time:T', title='เวลา', 
+                    axis=alt.Axis(format='%H:%M'), 
+                    scale=alt.Scale(domain=[domain_start.isoformat(), domain_end.isoformat()])),
+            y=alt.Y('pose_num:Q', title='1.0=หงาย/คว่ำ, 2.0=ตะแคง', scale=alt.Scale(domain=[0.8, 2.2])),
+            tooltip=[
+                alt.Tooltip('time:T', title='เวลา', format='%H:%M:%S'),
+                alt.Tooltip('pose_num:Q', title='สถานะท่านอน')
+            ]
+        ).interactive()
+        st.altair_chart(pose_chart, use_container_width=True)
         
+        # 3. กราฟสภาพแวดล้อม (Line Chart เส้นโค้งสวยงาม)
         st.subheader("🌡️ สภาพแวดล้อมห้องนอน (อุณหภูมิ & ความชื้น)")
         if 'temp' in df_chart.columns and 'hum' in df_chart.columns:
             df_env = df_chart[['time', 'temp', 'hum']].melt('time', var_name='Sensor', value_name='Value')
-            env_chart = alt.Chart(df_env).mark_line(point=False).encode(
+            env_chart = alt.Chart(df_env).mark_line(size=2, interpolate='monotone').encode( # 🌟 ใช้ interpolate แบบโค้ง
                 x=alt.X('time:T', title='เวลา', 
                         axis=alt.Axis(format='%H:%M'),
-                        scale=alt.Scale(domain=[start_time_stats.isoformat(), end_time_stats.isoformat()])
-                       ),
-                y=alt.Y('Value:Q', title='ค่าที่วัดได้'),
-                color=alt.Color('Sensor:N', legend=alt.Legend(title="ชนิดเซนเซอร์")),
+                        scale=alt.Scale(domain=[domain_start.isoformat(), domain_end.isoformat()])),
+                y=alt.Y('Value:Q', title='ค่าที่วัดได้ (องศา/%)', scale=alt.Scale(zero=False)),
+                color=alt.Color('Sensor:N', legend=alt.Legend(title="ชนิดเซนเซอร์", orient='top-left')),
                 tooltip=[
-                    alt.Tooltip('time:T', title='วันที่และเวลา', format='%d/%m/%Y %H:%M:%S'),
+                    alt.Tooltip('time:T', title='เวลา', format='%H:%M:%S'),
                     alt.Tooltip('Sensor:N', title='เซนเซอร์'),
-                    alt.Tooltip('Value:Q', title='ค่าที่บันทึก')
+                    alt.Tooltip('Value:Q', title='ค่า', format='.1f')
                 ]
             ).interactive()
             st.altair_chart(env_chart, use_container_width=True)
         else:
-            st.info("⏳ ไม่พบประวัติอุณหภูมิและความชื้นในข้อมูลชุดเก่า (ระบบจะเริ่มแสดงเมื่อมีข้อมูลใหม่เข้ามา)")
+            st.info("⏳ ไม่พบประวัติอุณหภูมิและความชื้นในข้อมูลชุดเก่า")
 
         st.divider()
         st.subheader("📋 ตารางข้อมูลบันทึกทั้งหมด (Log)")
@@ -288,7 +300,7 @@ elif page == "📈 กราฟสถิติ (Statistics)":
             hide_index=True
         )
     else:
-        st.warning("⚠️ ไม่มีข้อมูลสำหรับการสร้างกราฟในช่วงเวลาที่คุณเลือกครับ")
+        st.warning(f"⚠️ ไม่มีข้อมูลการนอนหลับในช่วงวันที่ {start_time_stats.strftime('%d/%m/%Y')} ถึง {end_time_stats.strftime('%d/%m/%Y')} ครับ")
 
 # ==========================================
 # 6. ระบบหน่วงเวลาเพื่อ Refresh หน้าเว็บอัตโนมัติ
