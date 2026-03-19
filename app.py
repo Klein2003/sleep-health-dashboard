@@ -186,13 +186,8 @@ if page == "🏠 หน้าหลัก (Dashboard)":
 elif page == "📈 กราฟสถิติ (Statistics)":
     st.title("📈 ไทม์ไลน์พฤติกรรมการนอนหลับ (Time-Series)")
     
-    time_range = st.selectbox("📅 เลือกช่วงเวลาการดูสถิติ:", 
-                              ["รายวัน (1 คืน)", "รายสัปดาห์ (7 วันย้อนหลัง)", "รายเดือน (30 วันย้อนหลัง)", "รายปี (365 วันย้อนหลัง)"])
-    
-    if time_range == "รายวัน (1 คืน)": days_back = 1
-    elif time_range == "รายสัปดาห์ (7 วันย้อนหลัง)": days_back = 7
-    elif time_range == "รายเดือน (30 วันย้อนหลัง)": days_back = 30
-    else: days_back = 365
+    # 🌟 ลบ Dropdown เลือกช่วงเวลาออก และบังคับให้ดูเป็น "รายวัน" ตามวันที่อ้างอิงเสมอ
+    days_back = 1
         
     start_time_stats = datetime.combine(selected_date - timedelta(days=days_back), dt_time(18, 0))
     end_time_stats = datetime.combine(selected_date, dt_time(18, 0))
@@ -202,11 +197,9 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_stats = df_all[(df_all['time'] >= start_time_stats) & (df_all['time'] <= end_time_stats)].copy()
 
     if not df_stats.empty:
-        # 🌟 คำนวณขอบเขตเวลาจริงๆ ที่มีข้อมูล (เพื่อทำ Auto-Zoom)
         actual_start = df_stats['time'].min()
         actual_end = df_stats['time'].max()
         
-        # เพิ่มพื้นที่ว่างซ้ายขวาให้กราฟดูไม่อึดอัด (ข้างละ 5 นาที)
         domain_start = actual_start - timedelta(minutes=5)
         domain_end = actual_end + timedelta(minutes=5)
         
@@ -224,7 +217,6 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_chart.set_index('time', inplace=True)
         df_chart = df_chart[~df_chart.index.duplicated(keep='last')]
 
-        # Resample เฉพาะช่วงที่มีข้อมูลจริง กราฟจะได้ไม่สร้างสะพานว่างเปล่ายาวๆ
         df_chart = df_chart.resample('30S').mean(numeric_only=True) 
         df_chart['prob'] = df_chart['prob'].fillna(0) 
         df_chart['pose_num'] = df_chart['pose_num'].ffill() 
@@ -236,18 +228,14 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         df_chart['prob_smooth'] = df_chart['prob'].rolling(window=2, min_periods=1).mean()
         df_chart.reset_index(inplace=True) 
 
-        # -----------------------------------
-        # วาดกราฟด้วย Altair รูปแบบใหม่
-        # -----------------------------------
-        
-        # 1. กราฟกรน (Area Chart คลื่นสีแดง)
+        # 1. กราฟกรน
         st.subheader("🗣️ ความน่าจะเป็นของการกรน (Snoring Probability)")
         snore_chart = alt.Chart(df_chart).mark_area(
             color='#FF4B4B', opacity=0.4, line={'color': '#FF4B4B', 'size': 2}
         ).encode(
             x=alt.X('time:T', title='เวลา', 
                     axis=alt.Axis(format='%H:%M'), 
-                    scale=alt.Scale(domain=[domain_start.isoformat(), domain_end.isoformat()])), # 🌟 ใช้ Auto-Zoom Domain
+                    scale=alt.Scale(domain=[domain_start.isoformat(), domain_end.isoformat()])),
             y=alt.Y('prob_smooth:Q', title='ความน่าจะเป็น (0-1)'),
             tooltip=[
                 alt.Tooltip('time:T', title='เวลา', format='%H:%M:%S'),
@@ -256,10 +244,10 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         ).interactive()
         st.altair_chart(snore_chart, use_container_width=True)
         
-        # 2. กราฟท่านอน (Step Chart ขั้นบันได)
+        # 2. กราฟท่านอน
         st.subheader("🛌 การเปลี่ยนท่านอนระหว่างคืน (Sleep Pose)")
         pose_chart = alt.Chart(df_chart).mark_line(
-            color='#1f77b4', size=3, interpolate='step-after' # 🌟 ใช้ interpolate แบบขั้นบันได
+            color='#1f77b4', size=3, interpolate='step-after'
         ).encode(
             x=alt.X('time:T', title='เวลา', 
                     axis=alt.Axis(format='%H:%M'), 
@@ -272,11 +260,11 @@ elif page == "📈 กราฟสถิติ (Statistics)":
         ).interactive()
         st.altair_chart(pose_chart, use_container_width=True)
         
-        # 3. กราฟสภาพแวดล้อม (Line Chart เส้นโค้งสวยงาม)
+        # 3. กราฟสภาพแวดล้อม
         st.subheader("🌡️ สภาพแวดล้อมห้องนอน (อุณหภูมิ & ความชื้น)")
         if 'temp' in df_chart.columns and 'hum' in df_chart.columns:
             df_env = df_chart[['time', 'temp', 'hum']].melt('time', var_name='Sensor', value_name='Value')
-            env_chart = alt.Chart(df_env).mark_line(size=2, interpolate='monotone').encode( # 🌟 ใช้ interpolate แบบโค้ง
+            env_chart = alt.Chart(df_env).mark_line(size=2, interpolate='monotone').encode(
                 x=alt.X('time:T', title='เวลา', 
                         axis=alt.Axis(format='%H:%M'),
                         scale=alt.Scale(domain=[domain_start.isoformat(), domain_end.isoformat()])),
