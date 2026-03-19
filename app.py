@@ -43,7 +43,7 @@ thai_time = datetime.utcnow() + timedelta(hours=7)
 current_date = thai_time.date()
 
 # ==========================================
-# 4. ดึงข้อมูล และ ระบบ Auto-Cleanup (ดึงข้อมูลก่อนเพื่อนำไปโชว์ในปฏิทิน)
+# 4. ดึงข้อมูล และ ระบบ Auto-Cleanup (แบบลบยกโฟลเดอร์)
 # ==========================================
 ref_sensor = db.reference('sensor_data')
 sensor_data = ref_sensor.get()
@@ -51,25 +51,36 @@ temp = sensor_data.get('temperature', '-') if sensor_data else '-'
 hum = sensor_data.get('humidity', '-') if sensor_data else '-'
 
 ref_sleep = db.reference('sleep_data')
-all_sleep_data = ref_sleep.get()
+all_sleep_data_nested = ref_sleep.get()
 
 df_all = pd.DataFrame()
-if all_sleep_data:
-    df_all = pd.DataFrame.from_dict(all_sleep_data, orient='index')
+flat_sleep_data = {}
+avail_dates_list = []
+
+if all_sleep_data_nested:
+    # คำนวณวันที่ย้อนหลัง 7 วัน (แปลงเป็น string เพื่อเทียบชื่อโฟลเดอร์)
+    cutoff_date_str = (thai_time - timedelta(days=7)).strftime("%Y-%m-%d")
+    folders_to_delete = []
+
+    # 🌟 แกะกล่องโฟลเดอร์รายวัน
+    for date_folder, time_records in all_sleep_data_nested.items():
+        if date_folder < cutoff_date_str:
+            # ถ้าชื่อโฟลเดอร์เก่ากว่า 7 วัน ให้จดชื่อไว้เตรียมลบทิ้ง
+            folders_to_delete.append(date_folder)
+        else:
+            # ถ้าโฟลเดอร์ยังใหม่ ให้เอาข้อมูลข้างในมากองรวมกัน (Flatten)
+            if isinstance(time_records, dict):
+                flat_sleep_data.update(time_records)
+                avail_dates_list.append(date_folder)
+
+    # 🌟 ลบโฟลเดอร์เก่าทิ้งยกเข่ง! (เร็วและลดภาระ Database)
+    for old_folder in folders_to_delete:
+        db.reference(f'sleep_data/{old_folder}').delete()
+
+# สร้างตาราง Pandas จากข้อมูลที่แกะกล่องแล้ว
+if flat_sleep_data:
+    df_all = pd.DataFrame.from_dict(flat_sleep_data, orient='index')
     df_all['time'] = pd.to_datetime(df_all['time'])
-    
-    # 🌟 4.1 ระบบลบข้อมูลเก่าอัตโนมัติ (เก็บย้อนหลัง 7 วัน)
-    # คุณสามารถเปลี่ยนเลข 7 เป็นเลขอื่นได้ถ้าต้องการเก็บนานขึ้น
-    cutoff_date = thai_time - timedelta(days=7) 
-    old_data = df_all[df_all['time'] < cutoff_date]
-    
-    if not old_data.empty:
-        # ใช้คำสั่ง update เป็น None เพื่อลบข้อมูลหลายๆ ตัวพร้อมกันแบบรวดเร็ว (Batch Delete)
-        updates = {key: None for key in old_data.index}
-        db.reference('sleep_data').update(updates)
-        
-        # ตัดข้อมูลที่ถูกลบออกจากการแสดงผลของหน้าเว็บปัจจุบัน
-        df_all = df_all[df_all['time'] >= cutoff_date]
 
 # ==========================================
 # เมนูด้านข้าง (Sidebar)
@@ -115,13 +126,10 @@ st.sidebar.divider()
 st.sidebar.subheader("📅 เลือกวันที่อ้างอิง")
 selected_date = st.sidebar.date_input("ดูสถิติการนอนของวันที่:", value=current_date)
 
-# 🌟 4.2 ระบบบอกใบ้ว่าวันไหนมีข้อมูลบ้าง
-if not df_all.empty:
-    # คำนวณวันที่อ้างอิง (ถอยหลัง 18 ชั่วโมง แล้วบวก 1 วัน เพื่อให้ตรงกับกะการนอน)
-    df_all['ref_date'] = (df_all['time'] - pd.Timedelta(hours=18)).dt.date + pd.Timedelta(days=1)
-    avail_dates = sorted(df_all['ref_date'].unique())
-    # แปลงเป็นข้อความให้สวยงาม เช่น "18/03, 19/03"
-    avail_str = ", ".join([d.strftime("%d/%m") for d in avail_dates])
+# 🌟 ระบบบอกใบ้ว่าวันไหนมีข้อมูลบ้าง (ใช้ชื่อโฟลเดอร์มาบอกเลย)
+if avail_dates_list:
+    # แปลง 2026-03-19 เป็น 19/03
+    avail_str = ", ".join([datetime.strptime(d, "%Y-%m-%d").strftime("%d/%m") for d in sorted(avail_dates_list)])
     st.sidebar.success(f"✅ วันที่มีข้อมูล: {avail_str}")
 else:
     st.sidebar.error("❌ ยังไม่มีข้อมูลในระบบ")
@@ -145,9 +153,9 @@ if page == "🏠 หน้าหลัก (Dashboard)":
     col_t.metric("อุณหภูมิห้อง", f"{temp} °C")
     col_h.metric("ความชื้น", f"{hum} %")
 
-    if all_sleep_data:
-        latest_key = list(all_sleep_data.keys())[-1]
-        latest_data = all_sleep_data[latest_key]
+    if flat_sleep_data:
+        latest_key = sorted(list(flat_sleep_data.keys()))[-1]
+        latest_data = flat_sleep_data[latest_key]
         col_pose.metric("ท่านอนปัจจุบัน", latest_data.get("pose", "-"))
         
         snore_status = latest_data.get("snore", "-")
