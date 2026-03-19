@@ -328,5 +328,5 @@ elif page == "📈 กราฟสถิติ (Statistics)":
 # 6. ระบบหน่วงเวลาเพื่อ Refresh หน้าเว็บอัตโนมัติ
 # ==========================================
 if auto_refresh:
-    time.sleep(30)
+    time.sleep(10)
     st.rerun()
