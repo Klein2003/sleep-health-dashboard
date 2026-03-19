@@ -141,6 +141,10 @@ def firebase_loop():
             current_hum = sensor_ref.get('humidity', 0) if sensor_ref else 0
 
             now = datetime.datetime.now()
+            
+            # 🌟 สร้างชื่อโฟลเดอร์รายวัน (เช่น 2026-03-19)
+            date_folder = now.strftime("%Y-%m-%d") 
+            # สร้าง Key รายวินาที
             custom_key = now.strftime("%Y-%m-%d %H:%M:%S") 
             
             data = {
@@ -152,13 +156,14 @@ def firebase_loop():
                 "hum": current_hum
             }
 
-            db.reference('/sleep_data').child(custom_key).set(data)
-            print(f"☁️ ส่ง Firebase สำเร็จ: [{custom_key}]")
+            # 🌟 ส่งข้อมูลไปที่ sleep_data -> โฟลเดอร์วันที่ -> คีย์เวลา
+            db.reference(f'/sleep_data/{date_folder}').child(custom_key).set(data)
+            print(f"☁️ ส่ง Firebase สำเร็จ: [{date_folder} / {custom_key}]")
 
         except Exception as e:
             print("❌ Firebase error:", e)
 
-        time.sleep(30)
+        time.sleep(10)
 
 # ==========================================
 # 8. กล้อง
